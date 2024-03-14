@@ -131,6 +131,7 @@ func startControllers(config *rest.Config, opt *options.ServerOption) func(ctx c
 	controllerOpt.WorkerThreadsForPG = opt.WorkerThreadsForPG
 
 	return func(ctx context.Context) {
+		// controller 是通过每个controller中的init方法注册到controller变量中了的。
 		framework.ForeachController(func(c framework.Controller) {
 			if err := c.Initialize(controllerOpt); err != nil {
 				klog.Errorf("Failed to initialize controller <%s>: %v", c.Name(), err)
