@@ -119,9 +119,9 @@ func (jf *jobflowcontroller) Initialize(opt *framework.ControllerOption) error {
 
 	jf.recorder = eventBroadcaster.NewRecorder(versionedscheme.Scheme, v1.EventSource{Component: "vc-controller-manager"})
 	jf.queue = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-
+    // 入队的工具函数
 	jf.enqueueJobFlow = jf.enqueue
-
+    // 处理队列中数据的处理函数
 	jf.syncHandler = jf.handleJobFlow
 
 	state.SyncJobFlow = jf.syncJobFlow
@@ -136,7 +136,7 @@ func (jf *jobflowcontroller) Run(stopCh <-chan struct{}) {
 	go jf.jobInformer.Informer().Run(stopCh)
 
 	cache.WaitForCacheSync(stopCh, jf.jobSynced, jf.jobFlowSynced, jf.jobTemplateSynced)
-
+	// 使用 k8s pkg中的util ， 与k8s controller的风格一致
 	go wait.Until(jf.worker, time.Second, stopCh)
 
 	klog.Infof("JobFlowController is running ...... ")
@@ -169,7 +169,7 @@ func (jf *jobflowcontroller) processNextWorkItem() bool {
 		klog.Errorf("%v is not a valid queue request struct.", obj)
 		return true
 	}
-
+	// 具体处理handler
 	err := jf.syncHandler(&req)
 	jf.handleJobFlowErr(err, obj)
 
@@ -191,7 +191,7 @@ func (jf *jobflowcontroller) handleJobFlow(req *apis.FlowRequest) error {
 
 		return fmt.Errorf("get jobflow %s failed for %v", req.JobFlowName, err)
 	}
-
+	// 根据jobflow的状态， 生成不同的执行器
 	jobFlowState := jobflowstate.NewState(jobflow)
 	if jobFlowState == nil {
 		return fmt.Errorf("jobflow %s state %s is invalid", jobflow.Name, jobflow.Status.State)

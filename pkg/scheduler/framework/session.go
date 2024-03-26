@@ -144,7 +144,7 @@ func openSession(cache cache.Cache) *Session {
 		victimTasksFns:    map[string][]api.VictimTasksFn{},
 		jobStarvingFns:    map[string]api.ValidateFn{},
 	}
-
+	// 从cache中获取资源信息， 并深拷贝到session中
 	snapshot := cache.Snapshot()
 
 	ssn.Jobs = snapshot.Jobs
@@ -152,7 +152,8 @@ func openSession(cache cache.Cache) *Session {
 		if job.PodGroup != nil {
 			ssn.podGroupStatus[job.UID] = *job.PodGroup.Status.DeepCopy()
 		}
-
+		// 检查job是否可以调度， jobValid目前只有gang插件注册了
+		// 在每个plugin执行onSessionOpen方法时，会注册JobValid相关的方法。
 		if vjr := ssn.JobValid(job); vjr != nil {
 			if !vjr.Pass {
 				jc := &scheduling.PodGroupCondition{

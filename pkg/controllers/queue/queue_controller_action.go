@@ -43,11 +43,22 @@ func (c *queuecontroller) syncQueue(queue *schedulingv1beta1.Queue, updateStateF
 		ns, name, _ := cache.SplitMetaNamespaceKey(pgKey)
 
 		// TODO: check NotFound error and sync local cache.
+		// 获取podgroup对象
 		pg, err := c.pgLister.PodGroups(ns).Get(name)
 		if err != nil {
 			return err
 		}
-
+		// 根据podGroup的的状态，更新queueStatus的状态的计数器。
+		/*
+		spec:
+		  capability:
+		    cpu: 2
+		  reclaimable: false
+		  weight: 1
+		status:
+		  running: 1  queue中pg的状态的计数器。
+		  state: Open
+		*/
 		switch pg.Status.Phase {
 		case schedulingv1beta1.PodGroupPending:
 			queueStatus.Pending++
@@ -61,6 +72,8 @@ func (c *queuecontroller) syncQueue(queue *schedulingv1beta1.Queue, updateStateF
 	}
 
 	if updateStateFn != nil {
+		// 执行的结果就是把queue的状态stats的值，复制给queueStatus.State
+		// 和else下面的动作一样。
 		updateStateFn(&queueStatus, podGroups)
 	} else {
 		queueStatus.State = queue.Status.State
@@ -81,6 +94,8 @@ func (c *queuecontroller) syncQueue(queue *schedulingv1beta1.Queue, updateStateF
 
 	newQueue := queue.DeepCopy()
 	newQueue.Status = queueStatus
+	// 就是变相的更新了queue的状态。。。。
+	// 调用api更新queue的状态
 	if _, err := c.vcClient.SchedulingV1beta1().Queues().UpdateStatus(context.TODO(), newQueue, metav1.UpdateOptions{}); err != nil {
 		klog.Errorf("Failed to update status of Queue %s: %v.", newQueue.Name, err)
 		return err

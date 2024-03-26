@@ -81,6 +81,11 @@ func NewScheduler(config *rest.Config, opt *options.ServerOption) (*Scheduler, e
 
 // Run initializes and starts the Scheduler. It loads the configuration,
 // initializes the cache, and begins the scheduling process.
+/*
+会按照配置文件中的顺序执行action, action.Execute会调用plugin注册的方法, 对task、job进行处理，
+最终会由backfill、alloc或者preempt动作中调用对应的方法添加到cache的BindFlowChannel中， 等待绑定
+BindFlowChannel  会有sessionCache中的bind方法进行处理。最终调用k8s的bind方法进行绑定
+*/
 func (pc *Scheduler) Run(stopCh <-chan struct{}) {
 	pc.loadSchedulerConf()
 	go pc.watchSchedulerConf(stopCh)
@@ -98,31 +103,37 @@ func (pc *Scheduler) Run(stopCh <-chan struct{}) {
 
 // runOnce executes a single scheduling cycle. This function is called periodically
 // as defined by the Scheduler's schedule period.
+// 每次的调度执行都会开启一个session。。。调度工作将会在这个session中进行
 func (pc *Scheduler) runOnce() {
 	klog.V(4).Infof("Start scheduling ...")
 	scheduleStartTime := time.Now()
 	defer klog.V(4).Infof("End scheduling ...")
 
 	pc.mutex.Lock()
+	//action也是通过 framework.RegisterAction(reclaim.New()) 的init方法注册进来的，
+	// 然后配置scheduler启动的配置文件决定采用哪些action
 	actions := pc.actions
 	plugins := pc.plugins
 	configurations := pc.configurations
 	pc.mutex.Unlock()
 
 	// Load ConfigMap to check which action is enabled.
+	// 动态watch配置， 所以每次调度都会重新加载配置
 	conf.EnabledActionMap = make(map[string]bool)
 	for _, action := range actions {
 		conf.EnabledActionMap[action.Name()] = true
 	}
-
+	//framework中的主要对象其实是session, 一个调度周期会开启一个session,
+	//调度工作将会在这个session中进行
 	ssn := framework.OpenSession(pc.cache, plugins, configurations)
 	defer func() {
 		framework.CloseSession(ssn)
 		metrics.UpdateE2eDuration(metrics.Duration(scheduleStartTime))
 	}()
-
+	// 执行actions
 	for _, action := range actions {
 		actionStartTime := time.Now()
+		// 执行plugins，这里就是通过action触发plugins中的方法，过滤相关的pod是否可以被调度
 		action.Execute(ssn)
 		metrics.UpdateActionDuration(action.Name(), metrics.Duration(actionStartTime))
 	}

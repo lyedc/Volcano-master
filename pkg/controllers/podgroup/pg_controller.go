@@ -88,6 +88,7 @@ func (pg *pgcontroller) Initialize(opt *framework.ControllerOption) error {
 	pg.queue = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
 
 	pg.schedulerNames = make([]string, len(opt.SchedulerNames))
+	// 从启动的参数中获取到调度器的名称。。。
 	copy(pg.schedulerNames, opt.SchedulerNames)
 	pg.inheritOwnerAnnotations = opt.InheritOwnerAnnotations
 
@@ -151,27 +152,28 @@ func (pg *pgcontroller) processNextReq() bool {
 		klog.Errorf("Fail to pop item from queue")
 		return false
 	}
-
+   // 这个队列中的对象是通过创建了一个Pod后，添加到队列中的。
 	req := obj.(podRequest)
 	defer pg.queue.Done(req)
-
+	// 获取pod对象
 	pod, err := pg.podLister.Pods(req.podNamespace).Get(req.podName)
 	if err != nil {
 		klog.Errorf("Failed to get pod by <%v> from cache: %v", req, err)
 		return true
 	}
-
+    // 注意这里的schedulerName的判断操作。
 	if !commonutil.Contains(pg.schedulerNames, pod.Spec.SchedulerName) {
 		klog.V(5).Infof("pod %v/%v field SchedulerName is not matched", pod.Namespace, pod.Name)
 		return true
 	}
-
+	// 如果pod已经有podgroup， 则不再处理
 	if pod.Annotations != nil && pod.Annotations[scheduling.KubeGroupNameAnnotationKey] != "" {
 		klog.V(5).Infof("pod %v/%v has created podgroup", pod.Namespace, pod.Name)
 		return true
 	}
 
 	// normal pod use volcano
+	// 为pod分配podgroup，通过pod的名称，给没有podgroup的pod创建podgroup
 	if err := pg.createNormalPodPGIfNotExist(pod); err != nil {
 		klog.Errorf("Failed to handle Pod <%s/%s>: %v", pod.Namespace, pod.Name, err)
 		pg.queue.AddRateLimited(req)

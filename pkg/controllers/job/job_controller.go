@@ -228,6 +228,7 @@ func (cc *jobcontroller) Initialize(opt *framework.ControllerOption) error {
 	cc.queueSynced = cc.queueInformer.Informer().HasSynced
 
 	// Register actions
+	// 这里注册的是job的状态对应的动作，从这里看只有两种动作了。。。
 	state.SyncJob = cc.syncJob
 	state.KillJob = cc.killJob
 
@@ -252,7 +253,8 @@ func (cc *jobcontroller) Run(stopCh <-chan struct{}) {
 			return
 		}
 	}
-
+	// commandQueue是用于处理busv1alpha1.Command对象的队列
+	// 与Queue Controller中类似， 最终会转换成apis.Request对象， 放入queue中
 	go wait.Until(cc.handleCommands, 0, stopCh)
 	var i uint32
 	for i = 0; i < cc.workers; i++ {
@@ -308,6 +310,8 @@ func (cc *jobcontroller) getWorkerQueue(key string) workqueue.RateLimitingInterf
 }
 
 func (cc *jobcontroller) processNextReq(count uint32) bool {
+	// 获取queue, queue的数量与worker数量相同并一一对应
+	// 也就是取出对应的work对应的queue
 	queue := cc.queueList[count]
 	obj, shutdown := queue.Get()
 	if shutdown {
@@ -320,7 +324,9 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 
 	key := jobcache.JobKeyByReq(&req)
 	if !cc.belongsToThisRoutine(key, count) {
+		// 这里做了校验， 如果key不属于当前worker， 则重新放入queue中
 		klog.Errorf("should not occur The job does not belongs to this routine key:%s, worker:%d...... ", key, count)
+		// 找到这个work对应的queue，然后放入到这个queue中。
 		queueLocal := cc.getWorkerQueue(key)
 		queueLocal.Add(req)
 		return true
@@ -334,14 +340,14 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		klog.Errorf("Failed to get job by <%v> from cache: %v", req, err)
 		return true
 	}
-
+	// state.NewState 这个名字见过很多次了， 用于生成执行器，对应了每种job状态的执行动作。
 	st := state.NewState(jobInfo)
 	if st == nil {
 		klog.Errorf("Invalid state <%s> of Job <%v/%v>",
 			jobInfo.Job.Status.State, jobInfo.Job.Namespace, jobInfo.Job.Name)
 		return true
 	}
-
+	// 获取当前需要执行的动作 这里的条件比较多。
 	action := applyPolicies(jobInfo.Job, &req)
 	klog.V(3).Infof("Execute <%v> on Job <%s/%s> in <%s> by <%T>.",
 		action, req.Namespace, req.JobName, jobInfo.Job.Status.State.Phase, st)
@@ -351,7 +357,21 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 			"Start to execute action %s ", action))
 	}
 	// 根据不同的State实现的Execute当job的action不同的时候，执行不同的动作，例如job被终止了，就kill掉job
+	/*
+	job的10中状态
+	Pending –> pendingState
+	Aborting –> abortingState
+	Aborted –> abortedState
+	Running –> runningState
+	Restarting –> restartingState
+	Completing –> completingState
+	Terminating –> terminatingState
+	Terminated、Failed、Completed –> terminatedState
+
+	*/
 	if err := st.Execute(action); err != nil {
+		// 如果执行失败， 则根据重试次数， 决定是否重新放入queue中。
+		// maxRequeueNum -1， 表示无限重试
 		if cc.maxRequeueNum == -1 || queue.NumRequeues(req) < cc.maxRequeueNum {
 			klog.V(2).Infof("Failed to handle Job <%s/%s>: %v",
 				jobInfo.Job.Namespace, jobInfo.Job.Name, err)
@@ -367,7 +387,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		}
 		klog.Warningf("Dropping job<%s/%s> out of the queue: %v because max retries has reached", jobInfo.Job.Namespace, jobInfo.Job.Name, err)
 	}
-
+	// 如果执行成功， 则删除queue中的事件
 	// If no error, forget it.
 	queue.Forget(req)
 

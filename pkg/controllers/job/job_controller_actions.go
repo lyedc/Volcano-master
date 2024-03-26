@@ -53,7 +53,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 			job.Namespace, job.Name)
 		return nil
 	}
-
+	// 状态计数器， 用于更新job的状态
 	var pending, running, terminating, succeeded, failed, unknown int32
 	taskStatusCount := make(map[string]batch.TaskState)
 
@@ -72,6 +72,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 
 			maxRetry := job.Spec.MaxRetry
 			lastRetry := false
+			// 判断是否是最后一次重试
 			if job.Status.RetryCount >= maxRetry-1 {
 				lastRetry = true
 			}
@@ -79,11 +80,17 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 			// Only retain the Failed and Succeeded pods at the last retry.
 			// If it is not the last retry, kill pod as defined in `podRetainPhase`.
 			retainPhase := podRetainPhase
+			// 如果是最后一次重试， 则保留失败和成功的pod
 			if lastRetry {
+				// var PodRetainPhaseSoft = PhaseMap{
+				//     v1.PodSucceeded: {},
+				//     v1.PodFailed:    {},
+				// }
 				retainPhase = state.PodRetainPhaseSoft
 			}
 			_, retain := retainPhase[pod.Status.Phase]
-
+			// 如果pod的状态不是上面的两种状态，那么久删除这个job对应的pod
+			// 上述两种状态也就是成功的成功和失败的。
 			if !retain {
 				err := cc.deleteJobPod(job.Name, pod)
 				if err == nil {
@@ -92,9 +99,10 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 				}
 				// record the err, and then collect the pod info like retained pod
 				errs = append(errs, err)
+				//放入到失败重试队列中。。errTasks是专门用于重试的队列。。
 				cc.resyncTask(pod)
 			}
-
+            // 根据pod的状态，更新状态计数器。。。
 			classifyAndAddUpPodBaseOnPhase(pod, &pending, &running, &succeeded, &failed, &unknown)
 			calcPodStatus(pod, taskStatusCount)
 		}
@@ -108,6 +116,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 	}
 
 	job = job.DeepCopy()
+	// 更新job的状态计数
 	// Job version is bumped only when job is killed
 	job.Status.Version++
 	job.Status.Pending = pending
@@ -120,9 +129,11 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 
 	// Update running duration
 	klog.V(3).Infof("Running duration is %s", metav1.Duration{Duration: time.Since(jobInfo.Job.CreationTimestamp.Time)}.ToUnstructured())
+	// 更新运行持续时间
 	job.Status.RunningDuration = &metav1.Duration{Duration: time.Since(jobInfo.Job.CreationTimestamp.Time)}
-
+	// 更新job的状态
 	if updateStatus != nil {
+		// updateStatus 主要是为了更新job的状态。
 		if updateStatus(&job.Status) {
 			job.Status.State.LastTransitionTime = metav1.Now()
 			jobCondition := newCondition(job.Status.State.Phase, &job.Status.State.LastTransitionTime)
@@ -131,6 +142,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 	}
 
 	// must be called before update job status
+	// RegisterPluginBuilder 在这里进行了注册逻辑。。。可以来这里查找到注册的插件。。。以及默认的执行方法
 	if err := cc.pluginOnJobDelete(job); err != nil {
 		return err
 	}
@@ -221,21 +233,30 @@ func (cc *jobcontroller) GetQueueInfo(queue string) (*scheduling.Queue, error) {
 	return queueInfo, err
 }
 
+// syncJob 同步作业状态，确保作业的管理和更新与集群的当前状态一致。
+//
+// 参数:
+// - jobInfo: 包含作业信息的指针，提供了作业的详细配置和状态。
+// - updateStatus: 一个状态更新函数，如果非空，将被调用以更新作业的状态。
+//
+// 返回值:
+// - 返回可能遇到的错误，如果操作成功，则返回 nil。
 func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.UpdateStatusFn) error {
 	job := jobInfo.Job
 	klog.V(3).Infof("Starting to sync up Job <%s/%s>, current version %d", job.Namespace, job.Name, job.Status.Version)
 	defer klog.V(3).Infof("Finished Job <%s/%s> sync up, current version %d", job.Namespace, job.Name, job.Status.Version)
 
+	// 如果作业正在终止，则跳过管理过程。
 	if jobInfo.Job.DeletionTimestamp != nil {
 		klog.Infof("Job <%s/%s> is terminating, skip management process.",
 			jobInfo.Job.Namespace, jobInfo.Job.Name)
 		return nil
 	}
 
-	// deep copy job to prevent mutate it
+	// 深拷贝作业，防止原始作业被修改。
 	job = job.DeepCopy()
 
-	// Find queue that job belongs to, and check if the queue has forwarding metadata
+	// 获取作业所属的队列信息，并检查队列是否有转发元数据。
 	queueInfo, err := cc.GetQueueInfo(job.Spec.Queue)
 	if err != nil {
 		return err
@@ -248,6 +269,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 			job.Annotations = make(map[string]string)
 		}
 		job.Annotations[batch.JobForwardingKey] = "true"
+		// 更新作业注释以标记转发状态。
 		job, err = cc.vcClient.BatchV1alpha1().Jobs(job.Namespace).Update(context.TODO(), job, metav1.UpdateOptions{})
 		if err != nil {
 			klog.Errorf("failed to update job: %s/%s, error: %s", job.Namespace, job.Name, err.Error())
@@ -255,18 +277,20 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		}
 	}
 
-	// Skip job initiation if job is already initiated
+	// 如果作业未初始化，则进行初始化；否则，优化作业更新过程。
 	if !isInitiated(job) {
+		// // initiateJob中会更新job状态、调用add插件、更新podgroup
 		if job, err = cc.initiateJob(job); err != nil {
 			return err
 		}
 	} else {
-		// TODO: optimize this call it only when scale up/down
+		// // initOnJobUpdate会调用add插件、如果没有podGroup就创建一个podGroup，有的话就根据计算更新podgroup
 		if err = cc.initOnJobUpdate(job); err != nil {
 			return err
 		}
 	}
 
+	// 如果队列有扩展集群，更新作业以标记转发状态。
 	if len(queueInfo.Spec.ExtendClusters) != 0 {
 		jobForwarding = true
 		job.Annotations[batch.JobForwardingKey] = "true"
@@ -277,6 +301,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		}
 	}
 
+	// 检查是否存在对应的 PodGroup，并根据状态决定是否需要同步任务。
 	var syncTask bool
 	pgName := job.Name + "-" + string(job.UID)
 	if pg, _ := cc.pgLister.PodGroups(job.Namespace).Get(pgName); pg != nil {
@@ -284,6 +309,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 			syncTask = true
 		}
 
+		// 记录 PodGroup 可调度性条件。
 		for _, condition := range pg.Status.Conditions {
 			if condition.Type == scheduling.PodGroupUnschedulableType {
 				cc.recorder.Eventf(job, v1.EventTypeWarning, string(batch.PodGroupPending),
@@ -293,6 +319,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	}
 
 	var jobCondition batch.JobCondition
+	// 如果不需要同步任务，更新作业状态。
 	if !syncTask {
 		if updateStatus != nil {
 			if updateStatus(&job.Status) {
@@ -301,6 +328,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 				job.Status.Conditions = append(job.Status.Conditions, jobCondition)
 			}
 		}
+		// 更新作业状态并更新缓存。
 		newJob, err := cc.vcClient.BatchV1alpha1().Jobs(job.Namespace).UpdateStatus(context.TODO(), job, metav1.UpdateOptions{})
 		if err != nil {
 			klog.Errorf("Failed to update status of Job %v/%v: %v",
@@ -315,37 +343,48 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		return nil
 	}
 
+	// 初始化各种状态的计数器和相关容器
 	var running, pending, terminating, succeeded, failed, unknown int32
 	taskStatusCount := make(map[string]batch.TaskState)
 
+	// 初始化用于记录要创建和删除的Pod的映射及错误容器
 	podToCreate := make(map[string][]*v1.Pod)
 	var podToDelete []*v1.Pod
 	var creationErrs []error
 	var deletionErrs []error
+
+	// 用于并发安全添加错误的互斥锁
 	appendMutex := sync.Mutex{}
 
+	// 将错误安全地添加到错误容器中
 	appendError := func(container *[]error, err error) {
 		appendMutex.Lock()
 		defer appendMutex.Unlock()
 		*container = append(*container, err)
 	}
 
+	// 初始化用于等待所有Pod创建完成的同步组
 	waitCreationGroup := sync.WaitGroup{}
 
+	// 遍历Job中定义的所有任务
 	for _, ts := range job.Spec.Tasks {
+		// 设置任务模板的名称并创建任务的副本
 		ts.Template.Name = ts.Name
 		tc := ts.Template.DeepCopy()
 		name := ts.Template.Name
 
+		// 尝试从jobInfo获取当前任务名称对应的Pods
 		pods, found := jobInfo.Pods[name]
 		if !found {
 			pods = map[string]*v1.Pod{}
 		}
 
+		// 为当前任务创建所有必要的Pod副本
 		var podToCreateEachTask []*v1.Pod
 		for i := 0; i < int(ts.Replicas); i++ {
 			podName := fmt.Sprintf(jobhelpers.PodNameFmt, job.Name, name, i)
 			if pod, found := pods[podName]; !found {
+				// 如果Pod不存在，则创建新的Pod
 				newPod := createJobPod(job, tc, ts.TopologyPolicy, i, jobForwarding)
 				if err := cc.pluginOnPodCreate(job, newPod); err != nil {
 					return err
@@ -353,33 +392,51 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 				podToCreateEachTask = append(podToCreateEachTask, newPod)
 				waitCreationGroup.Add(1)
 			} else {
+				// 如果Pod已存在，则根据其状态进行分类计数，并从待处理Pod映射中移除
 				delete(pods, podName)
 				if pod.DeletionTimestamp != nil {
+					// 如果Pod正在终止，则增加terminating计数
 					klog.Infof("Pod <%s/%s> is terminating", pod.Namespace, pod.Name)
 					atomic.AddInt32(&terminating, 1)
 					continue
 				}
 
+				// 根据Pod的状态进行分类计数
 				classifyAndAddUpPodBaseOnPhase(pod, &pending, &running, &succeeded, &failed, &unknown)
+				// 更新任务状态计数
 				calcPodStatus(pod, taskStatusCount)
 			}
 		}
+		// 将当前任务的所有待创建Pod添加到全局待创建Pod映射中
 		podToCreate[ts.Name] = podToCreateEachTask
+		// 将当前任务的所有待删除Pod添加到全局待删除Pod切片中
+		// 现在这里存放的是不是应该有的pod，根据上面的规则，如果没有对应的pod，就创建出来一个新的
+		// 如果存在就从这个pods中删除，所有这里存放的及时不应该出现的pod，需要删除了。。。
 		for _, pod := range pods {
 			podToDelete = append(podToDelete, pod)
 		}
 	}
 
+	// 此段代码主要负责创建和删除作业（Job）中的Pods。
+	// 先为每个任务（Task）创建Pods，然后等待所有Pods创建完成。
+	// 如果创建过程中有错误，会记录事件并返回错误信息。
+	// 创建完成后，如果作业规模缩小，会删除多余的Pods。
+	// 删除过程中同样处理错误，并在完成后更新作业状态。
+	// 为每个任务创建Pods
 	for taskName, podToCreateEachTask := range podToCreate {
+		// 跳过空任务
 		if len(podToCreateEachTask) == 0 {
 			continue
 		}
+		// 并发创建Pods
 		go func(taskName string, podToCreateEachTask []*v1.Pod) {
+			// 获取任务索引，检查任务是否有依赖
 			taskIndex := jobhelpers.GetTaskIndexUnderJob(taskName, job)
 			if job.Spec.Tasks[taskIndex].DependsOn != nil {
+				// 如果任务有依赖且依赖未满足，则跳过当前任务的Pod创建
 				if !cc.waitDependsOnTaskMeetCondition(taskName, taskIndex, podToCreateEachTask, job) {
 					klog.V(3).Infof("Job %s/%s depends on task not ready", job.Name, job.Namespace)
-					// release wait group
+					// 释放等待组
 					for _, pod := range podToCreateEachTask {
 						go func(pod *v1.Pod) {
 							defer waitCreationGroup.Done()
@@ -389,18 +446,19 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 				}
 			}
 
+			// 为任务中的每个Pod创建实例
 			for _, pod := range podToCreateEachTask {
 				go func(pod *v1.Pod) {
 					defer waitCreationGroup.Done()
+					// 尝试创建Pod，处理创建失败的情况
 					newPod, err := cc.kubeClient.CoreV1().Pods(pod.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
 					if err != nil && !apierrors.IsAlreadyExists(err) {
-						// Failed to create Pod, waitCreationGroup a moment and then create it again
-						// This is to ensure all podsMap under the same Job created
-						// So gang-scheduling could schedule the Job successfully
+						// Pod创建失败，记录错误并重试
 						klog.Errorf("Failed to create pod %s for Job %s, err %#v",
 							pod.Name, job.Name, err)
 						appendError(&creationErrs, fmt.Errorf("failed to create pod %s, err: %#v", pod.Name, err))
 					} else {
+						// Pod创建成功，更新状态
 						classifyAndAddUpPodBaseOnPhase(newPod, &pending, &running, &succeeded, &failed, &unknown)
 						calcPodStatus(pod, taskStatusCount)
 						klog.V(5).Infof("Created Task <%s> of Job <%s/%s>",
@@ -411,30 +469,32 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		}(taskName, podToCreateEachTask)
 	}
 
+	// 等待所有Pod创建完成
 	waitCreationGroup.Wait()
 
+	// 处理Pod创建过程中的错误
 	if len(creationErrs) != 0 {
 		cc.recorder.Event(job, v1.EventTypeWarning, FailedCreatePodReason,
 			fmt.Sprintf("Error creating pods: %+v", creationErrs))
 		return fmt.Errorf("failed to create %d pods of %d", len(creationErrs), len(podToCreate))
 	}
 
-	// Delete pods when scale down.
+	// 开始删除不再需要的Pods
 	waitDeletionGroup := sync.WaitGroup{}
 	waitDeletionGroup.Add(len(podToDelete))
 	for _, pod := range podToDelete {
 		go func(pod *v1.Pod) {
 			defer waitDeletionGroup.Done()
+			// 尝试删除Pod，处理删除失败的情况
 			err := cc.deleteJobPod(job.Name, pod)
 			if err != nil {
-				// Failed to delete Pod, waitCreationGroup a moment and then create it again
-				// This is to ensure all podsMap under the same Job created
-				// So gang-scheduling could schedule the Job successfully
+				// Pod删除失败，记录错误并重试
 				klog.Errorf("Failed to delete pod %s for Job %s, err %#v",
 					pod.Name, job.Name, err)
 				appendError(&deletionErrs, err)
 				cc.resyncTask(pod)
 			} else {
+				// Pod删除成功，更新状态
 				klog.V(3).Infof("Deleted Task <%s> of Job <%s/%s>",
 					pod.Name, job.Namespace, job.Name)
 				atomic.AddInt32(&terminating, 1)
@@ -443,11 +503,14 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	}
 	waitDeletionGroup.Wait()
 
+	// 处理Pod删除过程中的错误
 	if len(deletionErrs) != 0 {
 		cc.recorder.Event(job, v1.EventTypeWarning, FailedDeletePodReason,
 			fmt.Sprintf("Error deleting pods: %+v", deletionErrs))
 		return fmt.Errorf("failed to delete %d pods of %d", len(deletionErrs), len(podToDelete))
 	}
+
+	// 更新作业状态
 	job.Status = batch.JobStatus{
 		State: job.Status.State,
 
@@ -465,17 +528,20 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		RetryCount:          job.Status.RetryCount,
 	}
 
+	// 更新作业状态，包括条件和最后转换时间
 	if updateStatus != nil && updateStatus(&job.Status) {
 		job.Status.State.LastTransitionTime = metav1.Now()
 		jobCondition = newCondition(job.Status.State.Phase, &job.Status.State.LastTransitionTime)
 		job.Status.Conditions = append(job.Status.Conditions, jobCondition)
 	}
+	// 尝试更新作业状态
 	newJob, err := cc.vcClient.BatchV1alpha1().Jobs(job.Namespace).UpdateStatus(context.TODO(), job, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Errorf("Failed to update status of Job %v/%v: %v",
 			job.Namespace, job.Name, err)
 		return err
 	}
+	// 更新缓存中的作业状态
 	if e := cc.cache.Update(newJob); e != nil {
 		klog.Errorf("SyncJob - Failed to update Job %v/%v in cache:  %v",
 			newJob.Namespace, newJob.Name, e)
@@ -485,56 +551,81 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	return nil
 }
 
+// waitDependsOnTaskMeetCondition 等待依赖的任务满足条件。
+// 该函数检查指定任务是否满足其依赖条件，如果满足，则可以继续创建新的Pod。
+// taskName: 任务名称。
+// taskIndex: 任务在作业中的索引。
+// podToCreateEachTask: 每个任务要创建的Pod列表。
+// job: 当前作业对象。
+// 返回值: 如果依赖条件已满足，返回true；否则返回false。
 func (cc *jobcontroller) waitDependsOnTaskMeetCondition(taskName string, taskIndex int, podToCreateEachTask []*v1.Pod, job *batch.Job) bool {
+	// 检查任务是否有依赖项
 	if job.Spec.Tasks[taskIndex].DependsOn == nil {
+		// 无依赖项，直接返回true
 		return true
 	}
 	dependsOn := *job.Spec.Tasks[taskIndex].DependsOn
+	// 处理依赖于任何任务的场景
 	if len(dependsOn.Name) > 1 && dependsOn.Iteration == batch.IterationAny {
-		// any ready to create task, return true
+		// 检查所有依赖任务，任一任务准备就绪即返回true
 		for _, task := range dependsOn.Name {
 			if cc.isDependsOnPodsReady(task, job) {
 				return true
 			}
 		}
-		// all not ready to skip create task, return false
+		// 所有依赖任务均未就绪，返回false
 		return false
 	}
+	// 检查每个指定的依赖任务
 	for _, dependsOnTask := range dependsOn.Name {
-		// any not ready to skip create task, return false
+		// 任一依赖任务未就绪，返回false
 		if !cc.isDependsOnPodsReady(dependsOnTask, job) {
 			return false
 		}
 	}
-	// all ready to create task, return true
+	// 所有依赖任务均已就绪，返回true
 	return true
 }
 
+
+// isDependsOnPodsReady 检查任务所依赖的 Pod 是否准备就绪。
+//
+// 参数:
+// task - 当前任务的名称。
+// job - 当前作业的引用。
+//
+// 返回值:
+// 返回一个布尔值，表示依赖的 Pod 是否准备就绪。
 func (cc *jobcontroller) isDependsOnPodsReady(task string, job *batch.Job) bool {
+	// 获取当前任务所依赖的 Pod 名称列表。
 	dependsOnPods := jobhelpers.GetPodsNameUnderTask(task, job)
+	// 获取当前任务在作业中的索引。
 	dependsOnTaskIndex := jobhelpers.GetTaskIndexUnderJob(task, job)
-	runningPodCount := 0
+	runningPodCount := 0 // 记录正在运行的 Pod 数量。
+
 	for _, podName := range dependsOnPods {
+		// 尝试获取 Pod 信息。
 		pod, err := cc.podLister.Pods(job.Namespace).Get(podName)
 		if err != nil {
-			// If pod is not found. There are 2 possibilities.
-			// 1. vcjob has been deleted. This function should return true.
-			// 2. pod is not created. This function should return false, continue waiting.
+			// 如果获取 Pod 失败，判断是 Pod 不存在还是其他错误。
 			if apierrors.IsNotFound(err) {
+				// 检查作业是否还存在，如果作业不存在，则认为依赖的 Pod 已经准备就绪。
 				_, errGetJob := cc.jobLister.Jobs(job.Namespace).Get(job.Name)
-				if errGetJob != nil {
-					return apierrors.IsNotFound(errGetJob)
-				}
+				return apierrors.IsNotFound(errGetJob)
 			}
+			// 记录获取 Pod 失败的日志。
 			klog.Errorf("Failed to get pod %v/%v %v", job.Namespace, podName, err)
 			continue
 		}
 
+		// 检查 Pod 的状态是否为运行中或已成功。
 		if pod.Status.Phase != v1.PodRunning && pod.Status.Phase != v1.PodSucceeded {
+			// 如果 Pod 不处于运行中或已成功状态，则继续检查下一个 Pod。
 			klog.V(5).Infof("Sequential state, pod %v/%v of depends on tasks is not running", pod.Namespace, pod.Name)
 			continue
 		}
 
+		// 检查 Pod 内的所有容器是否都已准备就绪。
 		allContainerReady := true
 		for _, containerStatus := range pod.Status.ContainerStatuses {
 			if !containerStatus.Ready {
@@ -546,15 +637,20 @@ func (cc *jobcontroller) isDependsOnPodsReady(task string, job *batch.Job) bool 
 			runningPodCount++
 		}
 	}
+
+	// 检查运行中的 Pod 数量是否满足依赖任务的最小可用要求。
 	dependsOnTaskMinReplicas := job.Spec.Tasks[dependsOnTaskIndex].MinAvailable
 	if dependsOnTaskMinReplicas != nil {
 		if runningPodCount < int(*dependsOnTaskMinReplicas) {
+			// 如果运行中的 Pod 数量小于最小可用数量，则认为依赖的 Pod 未准备就绪。
 			klog.V(5).Infof("In a depends on startup state, there are already %d pods running, which is less than the minimum number of runs", runningPodCount)
 			return false
 		}
 	}
+	// 所有检查通过，认为依赖的 Pod 已经准备就绪。
 	return true
 }
+
 
 func (cc *jobcontroller) createJobIOIfNotExist(job *batch.Job) (*batch.Job, error) {
 	// If PVC does not exist, create them for Job.

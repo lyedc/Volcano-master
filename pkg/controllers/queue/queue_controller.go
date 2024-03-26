@@ -150,6 +150,7 @@ func (c *queuecontroller) Initialize(opt *framework.ControllerOption) error {
 					return false
 				}
 			},
+			// 谁创建了这个command的crd对象呢。。。。
 			Handler: cache.ResourceEventHandlerFuncs{
 				AddFunc: c.addCommand,
 			},
@@ -157,7 +158,8 @@ func (c *queuecontroller) Initialize(opt *framework.ControllerOption) error {
 		c.cmdLister = c.cmdInformer.Lister()
 		c.cmdSynced = c.cmdInformer.Informer().HasSynced
 	}
-
+    // 这里定义了QueueState中对应不同的动作所需要执行的函数。，也就是状态执行器最终要执行的方法
+    // 就是这里要执行的方法： queueState.Execute(req.Action)
 	queuestate.SyncQueue = c.syncQueue
 	queuestate.OpenQueue = c.openQueue
 	queuestate.CloseQueue = c.closeQueue
@@ -215,8 +217,9 @@ func (c *queuecontroller) processNextWorkItem() bool {
 		klog.Errorf("%v is not a valid queue request struct.", obj)
 		return true
 	}
-
+	// 把取出来的queue通过handler进行处理。
 	err := c.syncHandler(req)
+	// 如果没有出错，就把这个queue对象从队列中删除。
 	c.handleQueueErr(err, obj)
 
 	return true
@@ -227,7 +230,7 @@ func (c *queuecontroller) handleQueue(req *apis.Request) error {
 	defer func() {
 		klog.V(4).Infof("Finished syncing queue %s (%v).", req.QueueName, time.Since(startTime))
 	}()
-
+	// 这里的queue是k8s中的Queue资源对象
 	queue, err := c.queueLister.Get(req.QueueName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -237,13 +240,24 @@ func (c *queuecontroller) handleQueue(req *apis.Request) error {
 
 		return fmt.Errorf("get queue %s failed for %v", req.QueueName, err)
 	}
-
+	// 根据queue当前的状态， 生成不同执行器
+	/*
+	Queue资源有4中状态（QueueState）
+	Open –> openState
+	Closed –> closedState
+	Closing –> closingState
+	Unknown –> unknownState
+	*/
 	queueState := queuestate.NewState(queue)
 	if queueState == nil {
 		return fmt.Errorf("queue %s state %s is invalid", queue.Name, queue.Status.State)
 	}
 
 	klog.V(4).Infof("Begin execute %s action for queue %s, current status %s", req.Action, req.QueueName, queue.Status.State)
+	// 根据传递来的动作（action）执行不同的动作， 这个action的来源是可以通过command（用户手动触发，填写了command的执行对象以及执行的action），addqueue(一个新队列创建，这个时候默认的action是： SyncQueue)
+	// 用户手动触发的command最终会通过handler command 转变成一个 api.request 放入到queue的队列中最终有queue进行处理
+	// 这里就是根据action去更新queue的状态。 然后增加了对queue中每个状态的计数器的增加，貌似也只有在close的时候，才会更新这个状态。
+	// 其他的就是更新队列的状态
 	if err := queueState.Execute(req.Action); err != nil {
 		return fmt.Errorf("sync queue %s failed for %v, event is %v, action is %s",
 			req.QueueName, err, req.Event, req.Action)
@@ -288,7 +302,8 @@ func (c *queuecontroller) processNextCommand() bool {
 		klog.Errorf("%v is not a valid Command struct.", obj)
 		return true
 	}
-
+	// command 最终的结果是把command中的cmd.TargetObject.Name 以及Action:    busv1alpha1.Action(cmd.Action), 构建称一个api.request
+	// 放入到了queue的队列中，有queue的handler进行处理。
 	err := c.syncCommandHandler(cmd)
 	c.handleCommandErr(err, obj)
 

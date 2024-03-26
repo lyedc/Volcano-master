@@ -36,12 +36,17 @@ func OpenSession(cache cache.Cache, tiers []conf.Tier, configurations []conf.Con
 
 	for _, tier := range tiers {
 		for _, plugin := range tier.Plugins {
+			// scheduler启动时会将每个插件的名称以及对应的构建方法注册到一个pluginBuilders map中
+			// 这里会根据这个map， 获取到插件的构建方法， 并执行构建方法， 返回一个插件对象
+			// 插件分为内部插件和外部插件，内部通过init 方法注册到内存中。
+			// // Plugins for Jobs,外部通过配置文件加载，编译成.so文件加载到go的内存中。
 			if pb, found := GetPluginBuilder(plugin.Name); !found {
 				klog.Errorf("Failed to get plugin %s.", plugin.Name)
 			} else {
 				plugin := pb(plugin.Arguments)
 				ssn.plugins[plugin.Name()] = plugin
 				onSessionOpenStart := time.Now()
+				// 这里会注册一些方法到ssh中。比如验证job是否可以被调度的方法。。。
 				plugin.OnSessionOpen(ssn)
 				metrics.UpdatePluginDuration(plugin.Name(), metrics.OnSessionOpen, metrics.Duration(onSessionOpenStart))
 			}

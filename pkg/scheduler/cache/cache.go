@@ -765,11 +765,13 @@ func (sc *SchedulerCache) Run(stopCh <-chan struct{}) {
 	}
 
 	// Re-sync error tasks.
+	// 处理错误的任务
 	go wait.Until(sc.processResyncTask, 0, stopCh)
 
 	// Cleanup jobs.
+	// 清理job
 	go wait.Until(sc.processCleanupJob, 0, stopCh)
-
+	// 执行绑定操作
 	go wait.Until(sc.processBindTask, time.Millisecond*20, stopCh)
 
 	// Get metrics data
@@ -1005,7 +1007,7 @@ func (sc *SchedulerCache) processCleanupJob() {
 
 	sc.Mutex.Lock()
 	defer sc.Mutex.Unlock()
-
+	// 判断job是否已经完成。如果pg和task都为空，则认为job已经完成
 	if schedulingapi.JobTerminated(job) {
 		delete(sc.Jobs, job.UID)
 		metrics.DeleteJobMetrics(job.Name, string(job.Queue), job.Namespace)
@@ -1036,6 +1038,7 @@ func (sc *SchedulerCache) processResyncTask() {
 	}
 
 	reSynced := false
+	// syncTask 会用从apiserver中获取到资源信息更新task，通过旧的task，创建一个新的task到cache中。
 	if err := sc.syncTask(task); err != nil {
 		klog.Errorf("Failed to sync pod <%v/%v>, retry it.", task.Namespace, task.Name)
 		sc.resyncTask(task)
@@ -1130,6 +1133,9 @@ func (sc *SchedulerCache) AddBindTask(taskInfo *schedulingapi.TaskInfo) error {
 
 	return nil
 }
+
+// 对task中的pod执行bind的操作。。。bind就是调用k8s的bind接口执行最终的绑定操作。
+// task中指定了要绑定的NodeName，这个NodeName在是session阶段中获取到的。
 
 func (sc *SchedulerCache) processBindTask() {
 	for {

@@ -131,6 +131,30 @@ func (c *queuecontroller) deletePodGroup(obj interface{}) {
 	c.enqueue(req)
 }
 
+/*
+// Command 定义了命令结构体。
+type Command struct {
+	// TypeMeta 包含了对象类型的基本信息。
+	metav1.TypeMeta   `json:",inline"`
+	// ObjectMeta 包含了对象的元数据，比如名称、命名空间、标签等。
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+
+	// Action 定义了将对目标对象执行的操作。
+	Action string `json:"action,omitempty" protobuf:"bytes,2,opt,name=action"`
+
+	// TargetObject 定义了此命令的目标对象。
+	TargetObject *metav1.OwnerReference `json:"target,omitempty" protobuf:"bytes,3,opt,name=target"`
+
+	// Reason 是一个唯一的、单个词的、驼峰命名的原因说明，用于描述这个命令的执行原因。
+	// +optional
+	Reason string `json:"reason,omitempty" protobuf:"bytes,4,opt,name=reason"`
+
+	// Message 是一个可读性好的、详细说明此命令执行原因的消息。
+	// +optional
+	Message string `json:"message,omitempty" protobuf:"bytes,4,opt,name=message"`
+}
+*/
+
 func (c *queuecontroller) addCommand(obj interface{}) {
 	cmd, ok := obj.(*busv1alpha1.Command)
 	if !ok {

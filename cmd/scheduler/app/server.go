@@ -73,6 +73,7 @@ func Run(opt *options.ServerOption) error {
 	}
 
 	if opt.PluginsDir != "" {
+		// 加载要执行的调度插件。
 		err := framework.LoadCustomPlugins(opt.PluginsDir)
 		if err != nil {
 			klog.Errorf("Fail to load custom plugins: %v", err)

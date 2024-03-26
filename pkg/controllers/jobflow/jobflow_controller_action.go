@@ -40,6 +40,7 @@ func (jf *jobflowcontroller) syncJobFlow(jobFlow *v1alpha1flow.JobFlow, updateSt
 	defer klog.V(4).Infof("End sync JobFlow %s.", jobFlow.Name)
 
 	// JobRetainPolicy Judging whether jobs are necessary to delete
+	// 如果当前jobflow的状态为succeed， 且job的保留策略为delete, 则删除所有由jobflow创建的job
 	if jobFlow.Spec.JobRetainPolicy == v1alpha1flow.Delete && jobFlow.Status.State.Phase == v1alpha1flow.Succeed {
 		if err := jf.deleteAllJobsCreatedByJobFlow(jobFlow); err != nil {
 			klog.Errorf("Failed to delete jobs of JobFlow %v/%v: %v",
@@ -50,6 +51,7 @@ func (jf *jobflowcontroller) syncJobFlow(jobFlow *v1alpha1flow.JobFlow, updateSt
 	}
 
 	// deploy job by dependence order.
+	// 根据jobflow中声明的jobtemplate创建job， 声明顺序即为创建顺序
 	if err := jf.deployJob(jobFlow); err != nil {
 		klog.Errorf("Failed to create jobs of JobFlow %v/%v: %v",
 			jobFlow.Namespace, jobFlow.Name, err)
@@ -57,6 +59,7 @@ func (jf *jobflowcontroller) syncJobFlow(jobFlow *v1alpha1flow.JobFlow, updateSt
 	}
 
 	// update jobFlow status
+	// 获取jobflow下所有job的状态
 	jobFlowStatus, err := jf.getAllJobStatus(jobFlow)
 	if err != nil {
 		return err
@@ -80,12 +83,15 @@ func (jf *jobflowcontroller) deployJob(jobFlow *v1alpha1flow.JobFlow) error {
 		if _, err := jf.jobLister.Jobs(jobFlow.Namespace).Get(jobName); err != nil {
 			if errors.IsNotFound(err) {
 				// If it is not distributed, judge whether the dependency of the VcJob meets the requirements
+				// 如果job没有依赖， 则直接创建
 				if flow.DependsOn == nil || flow.DependsOn.Targets == nil {
 					if err := jf.createJob(jobFlow, flow); err != nil {
 						return err
 					}
 				} else {
 					// query whether the dependencies of the job have been met
+					// 有依赖则判断依赖的job是否已经完成
+					// 任何一个依赖的job未完成都不会创建
 					flag, err := jf.judge(jobFlow, flow)
 					if err != nil {
 						return err

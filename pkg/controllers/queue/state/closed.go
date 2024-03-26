@@ -27,14 +27,17 @@ type closedState struct {
 
 func (cs *closedState) Execute(action v1alpha1.Action) error {
 	switch action {
+	// 开启动作
 	case v1alpha1.OpenQueueAction:
 		return OpenQueue(cs.queue, func(status *v1beta1.QueueStatus, podGroupList []string) {
 			status.State = v1beta1.QueueStateOpen
 		})
+		// 关闭动作
 	case v1alpha1.CloseQueueAction:
 		return SyncQueue(cs.queue, func(status *v1beta1.QueueStatus, podGroupList []string) {
 			status.State = v1beta1.QueueStateClosed
 		})
+		// 默认动作,也是addqueue时候添加的默认动作。
 	default:
 		return SyncQueue(cs.queue, func(status *v1beta1.QueueStatus, podGroupList []string) {
 			specState := cs.queue.Status.State

@@ -28,6 +28,7 @@ import (
 	"volcano.sh/volcano/pkg/controllers/job/plugins/svc"
 )
 
+// 注册job中plugins对应的具体实现。。
 func init() {
 	RegisterPluginBuilder("ssh", ssh.New)
 	RegisterPluginBuilder("env", env.New)

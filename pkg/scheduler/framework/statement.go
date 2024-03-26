@@ -37,13 +37,18 @@ const (
 	Allocate
 )
 
+// 存储task的操作信息
 type operation struct {
+	// 操作名称， Evict/Pipeline/Allocate
 	name   Operation
+	// 操作的task
 	task   *api.TaskInfo
+	// 操作的原因
 	reason string
 }
 
 // Statement structure
+// statement用于存储这一次“打包”调度的信息， 最终统一提交或取消
 type Statement struct {
 	operations []operation
 	ssn        *Session

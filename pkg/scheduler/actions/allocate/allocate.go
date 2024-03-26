@@ -167,6 +167,7 @@ func (alloc *Action) allocateResources(queues *util.PriorityQueue, jobsMap map[a
 
 func (alloc *Action) allocateResourcesForTasks(tasks *util.PriorityQueue, job *api.JobInfo, jobs *util.PriorityQueue, queue *api.QueueInfo, allNodes []*api.NodeInfo) {
 	ssn := alloc.session
+	// statement用于存储这一次“打包”调度的信息， 最终统一提交或取消
 	stmt := framework.NewStatement(ssn)
 	ph := util.NewPredicateHelper()
 
@@ -234,11 +235,14 @@ func (alloc *Action) allocateResourcesForTasks(tasks *util.PriorityQueue, job *a
 
 				bestNode = ssn.BestNodeFn(task, nodeScores)
 				if bestNode == nil {
+					// 所以会直接走到这里。 这里会选择评分最高的那一组node，然后从中随机选择一个
 					bestNode = util.SelectBestNode(nodeScores)
 				}
 			}
 
 			// If a proper node is found in idleCandidateNodes, skip futureIdleCandidateNodes and directly return the node information.
+			// 优先选择idleCandidateNodes
+			// 如果找到了node，跳出循环
 			if bestNode != nil {
 				break
 			}
