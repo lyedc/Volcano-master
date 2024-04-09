@@ -60,9 +60,11 @@ func (shuffle *Action) Execute(ssn *framework.Session) {
 	}
 
 	// Evict target workloads
+	//计算出要驱逐的TaskInfo,也就是Pod的列表。
 	victims := ssn.VictimTasks(tasks)
 	for victim := range victims {
 		klog.V(3).Infof("pod %s from namespace %s and job %s will be evicted.\n", victim.Name, victim.Namespace, string(victim.Job))
+		// 调用具体的驱逐程序。
 		if err := ssn.Evict(victim, "shuffle"); err != nil {
 			klog.Errorf("Failed to evict Task <%s/%s>: %v\n", victim.Namespace, victim.Name, err)
 			continue

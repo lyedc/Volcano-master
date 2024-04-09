@@ -52,12 +52,28 @@ var (
 	MetricsPeriod string
 )
 
+// 这个插件会在 shuffle action中被调用。
+// preempt action 中被执行。 也就是抢占调度中
 func init() {
 	RegisteredStrategyConfigs = make(map[string]interface{})
 	VictimFn = make(map[string]api.VictimTasksFn)
 	MetricsPeriod = "5m"
 
 	// register victim functions for all strategies here
+	// 初始化默认的策略，可以存在的三种策略。
+	/*
+	- plugins:
+	      - name: priority
+	      - name: gang
+	      - name: conformance
+	      - name: rescheduling       ## rescheduling plugin
+	        arguments:
+	          interval: 5m           ## optional, the strategies will be called in this duration periodcally. 5 minuters by default.
+	          strategies:            ## required, strategies working in order
+	            - name: offlineOnly
+	            - name: lowPriorityFirst
+	            - name: lowNodeUtilization
+	*/
 	VictimFn["lowNodeUtilization"] = victimsFnForLnu
 }
 
@@ -93,7 +109,7 @@ func (rp *reschedulingPlugin) OnSessionOpen(ssn *framework.Session) {
 			}
 		}
 	}
-
+   // 这里判断上次运行的时间和当前时间是否已经间隔了指定的间隔时间。
 	if !timeToRun(configs.interval) {
 		klog.V(3).Infof("It is not the time to execute rescheduling strategies.")
 		return
@@ -101,6 +117,7 @@ func (rp *reschedulingPlugin) OnSessionOpen(ssn *framework.Session) {
 
 	// Get all strategies and register the victim functions for each strategy.
 	victimFns := make([]api.VictimTasksFn, 0)
+	// 从配置文件中读取重调度策略
 	for _, strategy := range configs.strategies {
 		if VictimFn[strategy.Name] != nil {
 			klog.V(4).Infof("strategy: %s\n", strategy.Name)
@@ -156,6 +173,7 @@ func (rc *Configs) parseArguments(arguments framework.Arguments) {
 		klog.V(4).Infof("Parse rescheduling interval failed. Reset the interval to 5m by default.")
 		rc.interval = DefaultInterval
 	}
+	// 这里是通过配置文件中定义的时间来修改的。这里的配置文件一定要是10m中的，因为prome获取的是10m,如果采用默认的5m中，那么就获取不到数据了。
 	if metricsPeriodArg, ok := arguments["metricsPeriod"]; ok {
 		MetricsPeriod = metricsPeriodArg.(string)
 	}

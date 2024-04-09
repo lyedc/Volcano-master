@@ -111,6 +111,28 @@ var victimsFnForLnu = func(tasks []*api.TaskInfo) []*api.TaskInfo {
 
 	// parse configuration arguments
 	utilizationConfig := NewLowNodeUtilizationConf()
+	// 根据调度器的配置的插件参数。
+	/*
+	- name: rescheduling       ## rescheduling plugin
+	arguments:
+	  interval: 5m           ## optional, the strategies will be called in this duration periodically. 5 minutes by default.
+	  metricsPeriod: 5m(注意这里的配置参数，需要和从prome采集嗯指标的时间一致，prome采集嗯时间是10m所以这里的5m不能匹配上。)      ## optional, the metrics will be used during this plugin. 5 minutes by default.
+	  strategies:            ## required, strategies working in order
+		- name: offlineOnly
+		- name: lowPriorityFirst
+		- name: lowNodeUtilization
+		  params:
+			thresholds:
+			  "cpu" : 20
+			  "memory": 20
+			  "pods": 20
+			targetThresholds:
+			  "cpu" : 50
+			  "memory": 50
+			  "pods": 50
+
+	*/
+	// 这里获取的就是上面配置的资源阈值。
 	parametersConfig := RegisteredStrategyConfigs["lowNodeUtilization"]
 	var config map[string]interface{}
 	config, ok := parametersConfig.(map[string]interface{})
@@ -122,6 +144,8 @@ var victimsFnForLnu = func(tasks []*api.TaskInfo) []*api.TaskInfo {
 
 	// group the nodes into lowNodes and highNodes
 	nodeUtilizationList := getNodeUtilization()
+	// 计算出资源使用高的节点和使用底的节点。
+	// 参数： 所有Node的信息，后面是判断高低的方法。
 	lowNodes, highNodes := groupNodesByUtilization(nodeUtilizationList, lowThresholdFilter, highThresholdFilter, *utilizationConfig)
 
 	if len(lowNodes) == 0 {
@@ -155,6 +179,7 @@ func lowThresholdFilter(usage *NodeUtilization, config interface{}) bool {
 	}
 	for rName, usagePercent := range usage.utilization {
 		if threshold, ok := utilizationConfig.Thresholds[string(rName)]; ok {
+			// 大于阈值了，表示是一个高资源利用率
 			if usagePercent >= threshold {
 				return false
 			}
@@ -183,6 +208,7 @@ func highThresholdFilter(usage *NodeUtilization, config interface{}) bool {
 }
 
 // isContinueEvictPods judges whether continue to select victim pods
+// 判断根据要求驱逐的Pod的资源，增加到低资源使用率的Pod后低资源使用率节点是否超过了阈值，如果超过了。就停止在驱逐pod，让低资源节点上
 func isContinueEvictPods(usage *NodeUtilization, totalAllocatableResource map[v1.ResourceName]*resource.Quantity, config interface{}) bool {
 	var isNodeOverused bool
 	utilizationConfig := parseArgToConfig(config)

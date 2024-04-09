@@ -73,6 +73,7 @@ func getNodeUtilization() []*NodeUtilization {
 }
 
 // evictPodsFromSourceNodes evict pods from source nodes to target nodes according to priority and QoS
+// sourceNodes: 高使用率， targetNodes：低使用率
 func evictPodsFromSourceNodes(sourceNodes, targetNodes []*NodeUtilization, tasks []*api.TaskInfo, evictionCon isContinueEviction, config interface{}) []*api.TaskInfo {
 	resourceNames := []v1.ResourceName{
 		v1.ResourceCPU,
@@ -105,6 +106,7 @@ func evictPodsFromSourceNodes(sourceNodes, targetNodes []*NodeUtilization, tasks
 			continue
 		}
 		sortPods(node.pods)
+		// 筛选出要被驱逐的pod，通过Pod，转移到TaskInfo上。
 		victims = append(victims, evict(node.pods, node, totalAllocatableResource, evictionCon, tasks, config)...)
 	}
 	klog.V(3).Infof("victims: %v\n", victims)
