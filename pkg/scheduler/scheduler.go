@@ -91,6 +91,7 @@ func (pc *Scheduler) Run(stopCh <-chan struct{}) {
 	go pc.watchSchedulerConf(stopCh)
 	// Start cache for policy.
 	pc.cache.SetMetricsConf(pc.metricsConf)
+	// 这里的run方法会启动通过prome采集指标的go程序
 	pc.cache.Run(stopCh)
 	pc.cache.WaitForCacheSync(stopCh)
 	klog.V(2).Infof("Scheduler completes Initialization and start to run")

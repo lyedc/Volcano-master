@@ -781,6 +781,7 @@ func (sc *SchedulerCache) Run(stopCh <-chan struct{}) {
 		interval = defaultMetricsInternal
 	}
 	klog.V(3).Infof("The interval for querying metrics data is %v", interval)
+	// 定时从prome中获取实时的资源使用数据并注入到nodeInfo中。
 	go wait.Until(sc.GetMetricsData, interval, stopCh)
 }
 

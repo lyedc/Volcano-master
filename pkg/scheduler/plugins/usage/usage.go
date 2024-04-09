@@ -129,6 +129,7 @@ func (up *usagePlugin) OnSessionOpen(ssn *framework.Session) {
 		usageStatus := &api.Status{}
 
 		now := time.Now()
+		// 判断如果节点的资源使用率数据没有更新，则认为该节点资源使用率数据无效，直接通过
 		if up.period == "" || now.Sub(node.ResourceUsage.MetricsTime) > MetricsActiveTime {
 			klog.V(4).Infof("The period(%s) is empty or the usage metrics data is not updated for more than %v minutes, "+
 				"Usage plugin filter for task %s/%s on node %s pass, metrics time is %v. ", up.period, MetricsActiveTime, task.Namespace, task.Name, node.Name, node.ResourceUsage.MetricsTime)
@@ -139,6 +140,7 @@ func (up *usagePlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 
 		klog.V(4).Infof("predicateFn cpuUsageAvg:%v,predicateFn memUsageAvg:%v", up.cpuThresholds, up.memThresholds)
+		// 判断节点的cpu 资源使用率是否超过阈值,现在默认的是10m中的一个平均时间
 		if node.ResourceUsage.CPUUsageAvg[up.period] > up.cpuThresholds {
 			klog.V(3).Infof("Node %s cpu usage %f exceeds the threshold %f", node.Name, node.ResourceUsage.CPUUsageAvg[up.period], up.cpuThresholds)
 			usageStatus.Code = api.UnschedulableAndUnresolvable
@@ -146,8 +148,10 @@ func (up *usagePlugin) OnSessionOpen(ssn *framework.Session) {
 			predicateStatus = append(predicateStatus, usageStatus)
 			return predicateStatus, fmt.Errorf("Plugin %s predicates failed, because of %s", up.Name(), NodeUsageCPUExtend)
 		}
+		// 判断节点的cpu 资源使用率是否超过阈值,现在默认的是10m中的一个平均时间
 		if node.ResourceUsage.MEMUsageAvg[up.period] > up.memThresholds {
 			klog.V(3).Infof("Node %s mem usage %f exceeds the threshold %f", node.Name, node.ResourceUsage.MEMUsageAvg[up.period], up.memThresholds)
+			// 超过阈值，就表示不能调度
 			usageStatus.Code = api.UnschedulableAndUnresolvable
 			usageStatus.Reason = NodeUsageMemoryExtend
 			predicateStatus = append(predicateStatus, usageStatus)
@@ -157,21 +161,23 @@ func (up *usagePlugin) OnSessionOpen(ssn *framework.Session) {
 		klog.V(4).Infof("Usage plugin filter for task %s/%s on node %s pass.", task.Namespace, task.Name, node.Name)
 		return predicateStatus, nil
 	}
-
+    // 打分函数
 	nodeOrderFn := func(task *api.TaskInfo, node *api.NodeInfo) (float64, error) {
 		score := 0.0
 		now := time.Now()
+		// 指标过期，得分为0，不参与得分计算
 		if up.period == "" || now.Sub(node.ResourceUsage.MetricsTime) > MetricsActiveTime {
 			klog.V(4).Infof("The period(%s) is empty or the usage metrics data is not updated for more than %v minutes, "+
 				"Usage plugin score for task %s/%s on node %s is 0, metrics time is %v. ", up.period, MetricsActiveTime, task.Namespace, task.Name, node.Name, node.ResourceUsage.MetricsTime)
 			return 0, nil
 		}
-
+        // 获取cpu使用的情况
 		cpuUsage, exist := node.ResourceUsage.CPUUsageAvg[up.period]
 		klog.V(4).Infof("Node %s cpu usage is %f.", node.Name, cpuUsage)
 		if !exist {
 			return 0, nil
 		}
+		// 计算cpu的得分情况100-cpu的使用情况，然后乘以cpu的权重值。
 		cpuScore := (100 - cpuUsage) / 100 * float64(up.cpuWeight)
 
 		memoryUsage, exist := node.ResourceUsage.MEMUsageAvg[up.period]
@@ -179,8 +185,11 @@ func (up *usagePlugin) OnSessionOpen(ssn *framework.Session) {
 		if !exist {
 			return 0, nil
 		}
+		// 计算内存的得分情况100-内存的使用情况，然后乘以内存的权重值。
 		memoryScore := (100 - memoryUsage) / 100 * float64(up.memoryWeight)
+		// 总得分 = cpu得分 + 内存得分 除以 权重值
 		score = (cpuScore + memoryScore) / float64((up.cpuWeight + up.memoryWeight))
+		// 最终得分
 		score *= float64(k8sFramework.MaxNodeScore * int64(up.usageWeight))
 		klog.V(4).Infof("Node %s score for task %s is %f.", node.Name, task.Name, score)
 		return score, nil
