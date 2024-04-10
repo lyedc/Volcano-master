@@ -104,13 +104,16 @@ func PodGroups(ar admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 func createPodGroupPatch(podgroup *schedulingv1beta1.PodGroup) ([]byte, error) {
 	var patch []patchOperation
 	if len(podgroup.Spec.Queue) == 0 {
+		// 设置默认的queue
 		queueName := schedulingv1beta1.DefaultQueue
+		// 获取namespace的annotation,如果ns中有queue,则使用ns中的queue，如果没有就是用default的queue
 		ns, err := config.KubeClient.CoreV1().Namespaces().Get(context.TODO(), podgroup.Namespace, metav1.GetOptions{})
 		if err == nil {
 			if val, ok := ns.GetAnnotations()[schedulingv1beta1.QueueNameAnnotationKey]; ok {
 				queueName = val
 			}
 		}
+		// 给podGroup设置默认的queue， 通过打patch的方式。
 		patch = append(patch, patchOperation{
 			Op:    "add",
 			Path:  "/spec/queue",
