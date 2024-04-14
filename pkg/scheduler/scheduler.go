@@ -125,7 +125,7 @@ func (pc *Scheduler) runOnce() {
 		conf.EnabledActionMap[action.Name()] = true
 	}
 	//framework中的主要对象其实是session, 一个调度周期会开启一个session,
-	//调度工作将会在这个session中进行
+	//调度工作将会在这个session中进行, 并且这里的会把plugin注册到acction中。
 	ssn := framework.OpenSession(pc.cache, plugins, configurations)
 	defer func() {
 		framework.CloseSession(ssn)
