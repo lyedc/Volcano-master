@@ -39,10 +39,10 @@ func (ra *Action) Initialize() {}
 func (ra *Action) Execute(ssn *framework.Session) {
 	klog.V(5).Infof("Enter Reclaim ...")
 	defer klog.V(5).Infof("Leaving Reclaim ...")
-
+    // 对queue进行排序,按照小顶堆的方式进行排序,上面的就是优先级比较低的.
 	queues := util.NewPriorityQueue(ssn.QueueOrderFn)
 	queueMap := map[api.QueueID]*api.QueueInfo{}
-
+    // 抢占
 	preemptorsMap := map[api.QueueID]*util.PriorityQueue{}
 	preemptorTasks := map[api.JobID]*util.PriorityQueue{}
 
@@ -66,11 +66,13 @@ func (ra *Action) Execute(ssn *framework.Session) {
 		} else if _, existed := queueMap[queue.UID]; !existed {
 			klog.V(4).Infof("Added Queue <%s> for Job <%s/%s>", queue.Name, job.Namespace, job.Name)
 			queueMap[queue.UID] = queue
+			// 放入到优先级队列中,是一个小顶堆,上面优先级低.
 			queues.Push(queue)
 		}
-
+		// job中是否存在没有调度的task
 		if job.HasPendingTasks() {
 			if _, found := preemptorsMap[job.Queue]; !found {
+				// 创建时间最早的放到最上面,按照时间排序,小顶堆,上面是创建时间比较靠前的
 				preemptorsMap[job.Queue] = util.NewPriorityQueue(ssn.JobOrderFn)
 			}
 			preemptorsMap[job.Queue].Push(job)
@@ -91,6 +93,8 @@ func (ra *Action) Execute(ssn *framework.Session) {
 		var task *api.TaskInfo
 
 		queue := queues.Pop().(*api.QueueInfo)
+		// 资源是否超用了..
+		// 这里应该理解为当这个资源queue资源用超了,那么这个queue中的job就不应该在参与抢占调度了...
 		if ssn.Overused(queue) {
 			klog.V(3).Infof("Queue <%s> is overused, ignore it.", queue.Name)
 			continue
@@ -141,23 +145,29 @@ func (ra *Action) Execute(ssn *framework.Session) {
 				task.Namespace, task.Name, n.Name)
 
 			var reclaimees []*api.TaskInfo
+			// 遍历节点上的task,也就相当于是遍历节点上的pod了.
 			for _, task := range n.Tasks {
 				// Ignore non running task.
 				if task.Status != api.Running {
 					continue
 				}
+				//  task不允许抢占,也就是不允许被回收.,那么这个task就跳过.
 				if !task.Preemptable {
 					continue
 				}
 
 				if j, found := ssn.Jobs[task.Job]; !found {
 					continue
+					// 如果这个job的queue和job的queue不相同,那么就尝试回收这个queue的资源
+					// 这里是抢占逻辑,不是传统意义的资源回收....只能抢占不是同一个queue的job的task.
 				} else if j.Queue != job.Queue {
 					q := ssn.Queues[j.Queue]
+					// 借用的资源是否允许被回收.
 					if !q.Reclaimable() {
 						continue
 					}
 					// Clone task to avoid modify Task's status on node.
+					// 需要回收的task列表.
 					reclaimees = append(reclaimees, task.Clone())
 				}
 			}

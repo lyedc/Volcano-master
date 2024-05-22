@@ -77,6 +77,12 @@ func (pp *proportionPlugin) Name() string {
 
 func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 	// Prepare scheduling data for this session.
+	/*
+	for _, n := range ssn.Nodes {
+			ssn.TotalResource.Add(n.Allocatable)
+		}
+	// 计算资源的方案.
+	*/
 	pp.totalResource.Add(ssn.TotalResource)
 
 	klog.V(4).Infof("The total resource is <%v>", pp.totalResource)
@@ -105,6 +111,8 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 				inqueue:   api.EmptyResource(),
 				guarantee: api.EmptyResource(),
 			}
+			// queue 中声明的资源限制.
+			// capability表示该queue内所有podgroup使用资源量之和的上限，它是一个硬约束
 			if len(queue.Queue.Spec.Capability) != 0 {
 				attr.capability = api.NewResource(queue.Queue.Spec.Capability)
 				if attr.capability.MilliCPU <= 0 {
@@ -118,6 +126,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 				attr.guarantee = api.NewResource(queue.Queue.Spec.Guarantee.Resource)
 			}
 			realCapability := pp.totalResource.Clone().Sub(pp.totalGuarantee).Add(attr.guarantee)
+			// 如果 queue的资源限制不为空,那么队列的资源限制为取两个最小的.
 			if attr.capability == nil {
 				attr.realCapability = realCapability
 			} else {
@@ -128,6 +137,8 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 
 		attr := pp.queueOpts[job.Queue]
+		// 这里的request是 已经运行的task和pending的task之和
+		// allocated为已经调度分配的资源
 		for status, tasks := range job.TaskStatusIndex {
 			if api.AllocatedStatus(status) {
 				for _, t := range tasks {
@@ -142,6 +153,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 
 		if job.PodGroup.Status.Phase == scheduling.PodGroupInqueue {
+			// 如果podgroup已经处于inqueue状态，则计算inqueue资源,就是podgroup中声明的minResources的值.
 			attr.inqueue.Add(job.GetMinResources())
 		}
 
@@ -176,12 +188,23 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		metrics.UpdateQueuePodGroupRunningCount(attr.name, queue.Queue.Status.Running)
 		metrics.UpdateQueuePodGroupUnknownCount(attr.name, queue.Queue.Status.Unknown)
 	}
-
+	// remaining来自节点可以分配的资源的总量.
 	remaining := pp.totalResource.Clone()
 	meet := map[api.QueueID]struct{}{}
+	/*
+	deserved 需要计算，分为多次循环，
+	每次循环尝试给 queue 一点资源，
+	直到给queue 的资源满足request，
+	这个queue的分配就结束.
+	当queue分配足够的资源后,就不在进行总权重的计算了.
+
+	*/
 	for {
+		// 初始化总权重
 		totalWeight := int32(0)
+		// 遍历队列选项，计算不含已满足队列的总权重
 		for _, attr := range pp.queueOpts {
+			// 这里表示队列的资源已经满足或者达到了最大分配值了.不能再继续分配了.
 			if _, found := meet[attr.queueID]; found {
 				continue
 			}
@@ -189,36 +212,42 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		}
 
 		// If no queues, break
+		// 如果没有待处理的队列，结束循环
 		if totalWeight == 0 {
 			klog.V(4).Infof("Exiting when total weight is 0")
 			break
 		}
-
+		// 复制当前剩余资源量, remaining来自节点可以分配的资源的总量.
 		oldRemaining := remaining.Clone()
 		// Calculates the deserved of each Queue.
 		// increasedDeserved is the increased value for attr.deserved of processed queues
 		// decreasedDeserved is the decreased value for attr.deserved of processed queues
-		increasedDeserved := api.EmptyResource()
-		decreasedDeserved := api.EmptyResource()
+		// 计算每个队列应得的资源量
+		increasedDeserved := api.EmptyResource() // 记录增加的资源量
+		decreasedDeserved := api.EmptyResource() // 记录减少的资源量
 		for _, attr := range pp.queueOpts {
 			klog.V(4).Infof("Considering Queue <%s>: weight <%d>, total weight <%d>.",
 				attr.name, attr.weight, totalWeight)
 			if _, found := meet[attr.queueID]; found {
 				continue
 			}
-
+			// 复制队列当前的应得资源
 			oldDeserved := attr.deserved.Clone()
+			// 计算新的应得资源量
 			attr.deserved.Add(remaining.Clone().Multi(float64(attr.weight) / float64(totalWeight)))
-
+			// 如果设置了实际能力限制，则应用限制
 			if attr.realCapability != nil {
+				// deserved中资源的标定,取 deserved 和 realCapability中最小的,如果没有的值,去infinity中的默认值..
 				attr.deserved.MinDimensionResource(attr.realCapability, api.Infinity)
 			}
+			// 应用请求资源量的限制
+			// deserved 的值和请求量取最小值
 			attr.deserved.MinDimensionResource(attr.request, api.Zero)
-
+			// 确保应得资源量不小于保证资源量,取两者之间的较大值
 			attr.deserved = helpers.Max(attr.deserved, attr.guarantee)
 			pp.updateShare(attr)
 			klog.V(4).Infof("Format queue <%s> deserved resource to <%v>", attr.name, attr.deserved)
-
+            // 判断请求量如果小于等于了deserved，则认为该队列满足条件,不在继续分配资源了.
 			if attr.request.LessEqual(attr.deserved, api.Zero) {
 				meet[attr.queueID] = struct{}{}
 				klog.V(4).Infof("queue <%s> is meet", attr.name)
@@ -229,7 +258,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 
 			klog.V(4).Infof("The attributes of queue <%s> in proportion: deserved <%v>, realCapability <%v>, allocate <%v>, request <%v>, elastic <%v>, share <%0.2f>",
 				attr.name, attr.deserved, attr.realCapability, attr.allocated, attr.request, attr.elastic, attr.share)
-
+			// 计算资源量的增减
 			increased, decreased := attr.deserved.Diff(oldDeserved, api.Zero)
 			increasedDeserved.Add(increased)
 			decreasedDeserved.Add(decreased)
@@ -237,7 +266,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 			// Record metrics
 			metrics.UpdateQueueDeserved(attr.name, attr.deserved.MilliCPU, attr.deserved.Memory)
 		}
-
+		// 更新剩余资源量
 		remaining.Sub(increasedDeserved).Add(decreasedDeserved)
 		klog.V(4).Infof("Remaining resource is  <%s>", remaining)
 		if remaining.IsEmpty() || reflect.DeepEqual(remaining, oldRemaining) {
@@ -291,7 +320,8 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 	ssn.AddOverusedFn(pp.Name(), func(obj interface{}) bool {
 		queue := obj.(*api.QueueInfo)
 		attr := pp.queueOpts[queue.UID]
-
+        // allocated为已经调度分配的资源
+		// 判断已分配资源是否小于等于应得资源，确定队列是否过载,如果大于就表示用超了.
 		overused := attr.deserved.LessEqual(attr.allocated, api.Zero)
 		metrics.UpdateQueueOverused(attr.name, overused)
 		if overused {
