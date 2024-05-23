@@ -252,6 +252,7 @@ func (alloc *Action) allocateResourcesForTasks(tasks *util.PriorityQueue, job *a
 		if task.InitResreq.LessEqual(bestNode.Idle, api.Zero) {
 			klog.V(3).Infof("Binding Task <%v/%v> to node <%v>",
 				task.Namespace, task.Name, bestNode.Name)
+			// 把pod和node进行绑定，通过也把task和node进行绑定。
 			if err := stmt.Allocate(task, bestNode); err != nil {
 				klog.Errorf("Failed to bind Task %v on %v in Session %v, err: %v",
 					task.UID, bestNode.Name, ssn.UID, err)
