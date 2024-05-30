@@ -331,7 +331,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		queueLocal.Add(req)
 		return true
 	}
-
+// Try to handle request <Queue: , Job: default/jobb, Task:sleep, Event:PodEvicted, ExitCode:0, Action:, JobVersion: 2>
 	klog.V(3).Infof("Try to handle request <%v>", req)
 
 	jobInfo, err := cc.cache.Get(key)
@@ -349,6 +349,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 	}
 	// 获取当前需要执行的动作 这里的条件比较多。
 	action := applyPolicies(jobInfo.Job, &req)
+	// Execute <RestartJob> on Job <default/jobb> in <Running> by <*state.runningState>
 	klog.V(3).Infof("Execute <%v> on Job <%s/%s> in <%s> by <%T>.",
 		action, req.Namespace, req.JobName, jobInfo.Job.Status.State.Phase, st)
 

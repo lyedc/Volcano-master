@@ -60,6 +60,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 	jobsMap := map[api.QueueID]*util.PriorityQueue{}
 
 	alloc.session = ssn
+	// 挑选合适的queue，和job进入到调度的逻辑中。
 	alloc.pickUpQueuesAndJobs(queues, jobsMap)
 	klog.V(3).Infof("Try to allocate resource to %d Queues", len(jobsMap))
 	alloc.allocateResources(queues, jobsMap)
@@ -67,8 +68,10 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 
 func (alloc *Action) pickUpQueuesAndJobs(queues *util.PriorityQueue, jobsMap map[api.QueueID]*util.PriorityQueue) {
 	ssn := alloc.session
+	// 这里的job是 enqueue中放入到jobs中的。
 	for _, job := range ssn.Jobs {
-		// If not config enqueue action, change Pending pg into Inqueue statue to avoid blocking job scheduling.
+		// If not config enqueue action, change Pendi
+		//ng pg into Inqueue statue to avoid blocking job scheduling.
 		if conf.EnabledActionMap["enqueue"] {
 			if job.IsPending() {
 				klog.V(4).Infof("Job <%s/%s> Queue <%s> skip allocate, reason: job status is pending.",
@@ -80,7 +83,7 @@ func (alloc *Action) pickUpQueuesAndJobs(queues *util.PriorityQueue, jobsMap map
 				job.Namespace, job.Name, job.Queue)
 			job.PodGroup.Status.Phase = scheduling.PodGroupInqueue
 		}
-
+        // 只有gang插件注册了这个方法。
 		if vr := ssn.JobValid(job); vr != nil && !vr.Pass {
 			klog.V(4).Infof("Job <%s/%s> Queue <%s> skip allocate, reason: %v, message %v", job.Namespace, job.Name, job.Queue, vr.Reason, vr.Message)
 			continue
@@ -152,6 +155,7 @@ func (alloc *Action) allocateResources(queues *util.PriorityQueue, jobsMap map[a
 		tasks := pendingTasks[job.UID]
 
 		// Added Queue back until no job in Namespace.
+		// 不断的从queue中取任务。
 		queues.Push(queue)
 
 		if tasks.Empty() {

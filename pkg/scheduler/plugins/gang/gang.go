@@ -65,7 +65,7 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 				Message: "Not enough valid pods of each task for gang-scheduling",
 			}
 		}
-
+        // 合法的task的数量。数量要大于job的最小值，
 		vtn := job.ValidTaskNum()
 		if vtn < job.MinAvailable {
 			return &api.ValidateResult{

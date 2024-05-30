@@ -30,7 +30,7 @@ func (ps *restartingState) Execute(action v1alpha1.Action) error {
 	return KillJob(ps.job, PodRetainPhaseNone, func(status *vcbatch.JobStatus) bool {
 		// Get the maximum number of retries.
 		maxRetry := ps.job.Job.Spec.MaxRetry
-
+        // 重启超过最大重试次数，那么就是job的状态更新为failed
 		if status.RetryCount >= maxRetry {
 			// Failed is the phase that the job is restarted failed reached the maximum number of retries.
 			status.State.Phase = vcbatch.Failed
@@ -40,7 +40,7 @@ func (ps *restartingState) Execute(action v1alpha1.Action) error {
 		for _, task := range ps.job.Job.Spec.Tasks {
 			total += task.Replicas
 		}
-
+        // 把状态修改了pending, 状态pending就会在队列里面进行调度
 		if total-status.Terminating >= status.MinAvailable {
 			status.State.Phase = vcbatch.Pending
 			return true

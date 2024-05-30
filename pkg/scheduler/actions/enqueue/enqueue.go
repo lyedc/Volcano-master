@@ -79,6 +79,7 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 			queues.Push(queue)
 		}
 		// 如果job是pending状态，添加到jobsMap中
+		// 如果job的状态不是pending的，就表示没有需要调度的job
 		if job.IsPending() {
 			if _, found := jobsMap[job.Queue]; !found {
 				// 如果jobsMap中没有queue，创建一个queue
@@ -129,12 +130,14 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 			overcommit
 			*/
 			ssn.JobEnqueued(job)
-			// 将podgroup的状态设置为Inqueue
+			// 将podgroup的状态设置为Inqueue,也就是修改了job的状态，从pending状态转换到入队中。
 			job.PodGroup.Status.Phase = scheduling.PodGroupInqueue
+			// 把更新job的状态
 			ssn.Jobs[job.UID] = job
 		}
 
 		// Added Queue back until no job in Queue.
+		// 把queue放回队列中，直到队列中没有job，这个时候queue中的job都放入到了ssh的jobs中了。
 		queues.Push(queue)
 	}
 }

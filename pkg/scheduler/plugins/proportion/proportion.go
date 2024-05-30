@@ -139,6 +139,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		attr := pp.queueOpts[job.Queue]
 		// 这里的request是 已经运行的task和pending的task之和
 		// allocated为已经调度分配的资源
+		// 每一次调度都会计算下资源的使用情况。，当pod被删除的回收，task就被回收，那么这里分配的资源也就是0了。
 		for status, tasks := range job.TaskStatusIndex {
 			if api.AllocatedStatus(status) {
 				for _, t := range tasks {

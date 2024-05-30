@@ -310,6 +310,12 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		}
 
 		// 记录 PodGroup 可调度性条件。
+		/*
+		Event(v1.ObjectReference{Kind:"Job", Namespace:"default", Name:"jobb", UID:"621d0426-d080-4271-bf07-6e294dfa9baf", APIVersion:"batch.volcano.sh/v1alpha1", ResourceVersion:"45197320", FieldPath:""}): type: 'Warning' reason: 'PodGroupPending'
+		PodGroup default:jobb unschedule,reason: 2/0 tasks in gang unschedulable: pod group is not ready, 2 minAvailable
+
+		*/
+		// 这里有问题，为什么podgroup已经调度完成了，还要展示之前的未调度的原因呢。。。
 		for _, condition := range pg.Status.Conditions {
 			if condition.Type == scheduling.PodGroupUnschedulableType {
 				cc.recorder.Eventf(job, v1.EventTypeWarning, string(batch.PodGroupPending),
