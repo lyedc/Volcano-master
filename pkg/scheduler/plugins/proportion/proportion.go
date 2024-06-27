@@ -294,23 +294,34 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 	ssn.AddReclaimableFn(pp.Name(), func(reclaimer *api.TaskInfo, reclaimees []*api.TaskInfo) ([]*api.TaskInfo, int) {
 		var victims []*api.TaskInfo
 		allocations := map[api.QueueID]*api.Resource{}
-
+		// allocated 表示task已经占用的资源
+		// deserved 按照权重比queue应分配的资源。
 		for _, reclaimee := range reclaimees {
+			// 找到要回收的的jobInfo
 			job := ssn.Jobs[reclaimee.Job]
+			// 通过jobInfo中的queue找到这个job对应的queue的资源属性。
 			attr := pp.queueOpts[job.Queue]
 
 			if _, found := allocations[job.Queue]; !found {
+				// 要被抢占的task的queue已经占用的资源
 				allocations[job.Queue] = attr.allocated.Clone()
 			}
+			// 抢占的task的queue已经分配的资源
 			allocated := allocations[job.Queue]
+			// 判断这个job对应的queue的分配资源是否小于抢占的task的资源需求，如果小于的话，这个queue的资源就
+			// 不满足被抢占，这个queue就无法被抢占。
 			if allocated.LessPartly(reclaimer.Resreq, api.Zero) {
 				klog.V(3).Infof("Failed to allocate resource for Task <%s/%s> in Queue <%s>, not enough resource.",
 					reclaimee.Namespace, reclaimee.Name, job.Queue)
 				continue
 			}
-
+			// 已分配的资源是否小于应得资源,如果不小于应得的资源（表示已经分配的资源大于了应得的资源，表示占用的别人的资源），那么就可以尝试进行回收。
+			// 这里也就说明了，只要已经分配的资源大于了应得的资源的queue中的task，资源才能被抢占。
+			// 如果queue没有超载，那么不会被抢占。也就相当于是资源的归还了。。
 			if !allocated.LessEqual(attr.deserved, api.Zero) {
+				// 分配的资源减去需要被占用的资源。
 				allocated.Sub(reclaimee.Resreq)
+				// 这个任务将要被回收
 				victims = append(victims, reclaimee)
 			}
 		}

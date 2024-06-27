@@ -194,6 +194,7 @@ func (cc *jobcontroller) Initialize(opt *framework.ControllerOption) error {
 
 	cc.podInformer = sharedInformers.Core().V1().Pods()
 	cc.podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		// 这里的addPod，会加入到JobInfo中的Pod对象中。
 		AddFunc:    cc.addPod,
 		UpdateFunc: cc.updatePod,
 		DeleteFunc: cc.deletePod,
@@ -341,6 +342,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		return true
 	}
 	// state.NewState 这个名字见过很多次了， 用于生成执行器，对应了每种job状态的执行动作。
+	// 默认是pending，可以认为job第一创建的时候是pending状态
 	st := state.NewState(jobInfo)
 	if st == nil {
 		klog.Errorf("Invalid state <%s> of Job <%v/%v>",
@@ -348,6 +350,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		return true
 	}
 	// 获取当前需要执行的动作 这里的条件比较多。
+	// 新创建的job。默认是 sycJob的action  SyncJobAction
 	action := applyPolicies(jobInfo.Job, &req)
 	// Execute <RestartJob> on Job <default/jobb> in <Running> by <*state.runningState>
 	klog.V(3).Infof("Execute <%v> on Job <%s/%s> in <%s> by <%T>.",

@@ -224,7 +224,7 @@ func (sc *SchedulerCache) addTask(pi *schedulingapi.TaskInfo) error {
 			klog.V(4).Infof("Pod <%v/%v> is in status %s.", pi.Namespace, pi.Name, pi.Status.String())
 		}
 	}
-
+    // 这里返回的是JobInfo，cache中的Jobs中存放的是JobInfo jobInfo中存放了TaskInfo， taskInfo是pod包装出来的。
 	job := sc.getOrCreateJob(pi)
 	if job != nil {
 		job.AddTaskInfo(pi)
@@ -676,14 +676,18 @@ func getJobID(pg *schedulingapi.PodGroup) schedulingapi.JobID {
 
 // Assumes that lock is already acquired.
 func (sc *SchedulerCache) setPodGroup(ss *schedulingapi.PodGroup) error {
+	// 通过namespace + name唯一确定一个job
 	job := getJobID(ss)
+	// cache中的Jobs是podGroup的包装。如果没有的话，就创建一个JobInfo，这的JobInfo同样会在addPod中被使用到，因为addPod中会生成一个
+	// taskInfo taskInfo会放入到JobInfo中。
 	if _, found := sc.Jobs[job]; !found {
 		sc.Jobs[job] = schedulingapi.NewJobInfo(job)
 	}
-
+     // 通过podGroup设置JobInfo中的属性。
 	sc.Jobs[job].SetPodGroup(ss)
 
 	// TODO(k82cn): set default queue in admission.
+	// 如果没有定义queue就是用默认的queue
 	if len(ss.Spec.Queue) == 0 {
 		sc.Jobs[job].Queue = schedulingapi.QueueID(sc.defaultQueue)
 	}

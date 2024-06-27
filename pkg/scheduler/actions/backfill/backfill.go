@@ -73,6 +73,7 @@ func (backfill *Action) Execute(ssn *framework.Session) {
 		ph := util.NewPredicateHelper()
 
 		for _, task := range job.TaskStatusIndex[api.Pending] {
+			// 调度没有设置资源的task
 			if task.InitResreq.IsEmpty() {
 				allocated := false
 				fe := api.NewFitErrors()

@@ -95,6 +95,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 		queue := queues.Pop().(*api.QueueInfo)
 		// 资源是否超用了..
 		// 这里应该理解为当这个资源queue资源用超了,那么这个queue中的job就不应该在参与抢占调度了...
+		// 这个queue已经超载了，那么这个queue中的job就不应该在参与抢占调度了...
 		if ssn.Overused(queue) {
 			klog.V(3).Infof("Queue <%s> is overused, ignore it.", queue.Name)
 			continue
@@ -160,6 +161,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 					continue
 					// 如果这个job的queue和job的queue不相同,那么就尝试回收这个queue的资源
 					// 这里是抢占逻辑,不是传统意义的资源回收....只能抢占不是同一个queue的job的task.
+				    // 要抢占的job不能占用自己queue中的资源。
 				} else if j.Queue != job.Queue {
 					q := ssn.Queues[j.Queue]
 					// 借用的资源是否允许被回收.
@@ -176,7 +178,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 				klog.V(4).Infof("No reclaimees on Node <%s>.", n.Name)
 				continue
 			}
-
+            // 需要的资源，被驱逐的task列表
 			victims := ssn.Reclaimable(task, reclaimees)
 
 			if err := util.ValidateVictims(task, n, victims); err != nil {
@@ -191,6 +193,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 			for _, reclaimee := range victims {
 				klog.Errorf("Try to reclaim Task <%s/%s> for Tasks <%s/%s>",
 					reclaimee.Namespace, reclaimee.Name, task.Namespace, task.Name)
+				// 这里回调用驱逐pod的方法。驱逐这个task对应的pod
 				if err := ssn.Evict(reclaimee, "reclaim"); err != nil {
 					klog.Errorf("Failed to reclaim Task <%s/%s> for Tasks <%s/%s>: %v",
 						reclaimee.Namespace, reclaimee.Name, task.Namespace, task.Name, err)
@@ -198,6 +201,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 				}
 				reclaimed.Add(reclaimee.Resreq)
 				// If reclaimed enough resources, break loop to avoid Sub panic.
+				// task中的资源够了，就不在进行驱逐，抢占了。
 				if resreq.LessEqual(reclaimed, api.Zero) {
 					break
 				}

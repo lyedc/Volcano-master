@@ -196,7 +196,7 @@ func (cc *jobcontroller) initiateJob(job *batch.Job) (*batch.Job, error) {
 			fmt.Sprintf("Failed to create PVC, err: %v", err))
 		return nil, err
 	}
-
+    // 按照最新的job信息，更新pg，如果没有pg，就创建一个新的pg，pg中的最小task数量也来自job，资源情况也是通过job中声明的资源填充
 	if err := cc.createOrUpdatePodGroup(newJob); err != nil {
 		cc.recorder.Event(job, v1.EventTypeWarning, string(batch.PodGroupError),
 			fmt.Sprintf("Failed to create PodGroup, err: %v", err))
@@ -280,6 +280,8 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	// 如果作业未初始化，则进行初始化；否则，优化作业更新过程。
 	if !isInitiated(job) {
 		// // initiateJob中会更新job状态、调用add插件、更新podgroup
+		// 新创建的pod因为job的状态为空，初始化更新job的状态为pending
+		// 并且会根据job的情况，更新pg中的最小task数量，资源情况也是通过job中声明的资源填充
 		if job, err = cc.initiateJob(job); err != nil {
 			return err
 		}
@@ -328,6 +330,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	// 如果不需要同步任务，更新作业状态。
 	if !syncTask {
 		if updateStatus != nil {
+			// 新创建的job，返回的是false，更新状态信息。
 			if updateStatus(&job.Status) {
 				job.Status.State.LastTransitionTime = metav1.Now()
 				jobCondition = newCondition(job.Status.State.Phase, &job.Status.State.LastTransitionTime)
@@ -380,6 +383,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		name := ts.Template.Name
 
 		// 尝试从jobInfo获取当前任务名称对应的Pods
+		// 新创建的job中没有pod的信息。
 		pods, found := jobInfo.Pods[name]
 		if !found {
 			pods = map[string]*v1.Pod{}
@@ -389,6 +393,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		var podToCreateEachTask []*v1.Pod
 		for i := 0; i < int(ts.Replicas); i++ {
 			podName := fmt.Sprintf(jobhelpers.PodNameFmt, job.Name, name, i)
+			// 新创建的job中没有pod的信息。会走创建pod的逻辑。
 			if pod, found := pods[podName]; !found {
 				// 如果Pod不存在，则创建新的Pod
 				newPod := createJobPod(job, tc, ts.TopologyPolicy, i, jobForwarding)
@@ -398,7 +403,9 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 				podToCreateEachTask = append(podToCreateEachTask, newPod)
 				waitCreationGroup.Add(1)
 			} else {
-				// 如果Pod已存在，则根据其状态进行分类计数，并从待处理Pod映射中移除
+				// 如果Pod已存在，则根据其状态进行分类计数，并从待处理Pod映射中移除,如果 已经存在了，就从job.pods中删除。。
+				// 这里的从job的pods中删除，是为了从下面的删除逻辑中，这个pod不被删除掉，因为下面的计算待删除的pod的逻辑
+				// 是直接循环了Pods这个列表，如果不从这里面删除的话，就会导致pod在下面的删除逻辑中被标记为删除。
 				delete(pods, podName)
 				if pod.DeletionTimestamp != nil {
 					// 如果Pod正在终止，则增加terminating计数
@@ -418,6 +425,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		// 将当前任务的所有待删除Pod添加到全局待删除Pod切片中
 		// 现在这里存放的是不是应该有的pod，根据上面的规则，如果没有对应的pod，就创建出来一个新的
 		// 如果存在就从这个pods中删除，所有这里存放的及时不应该出现的pod，需要删除了。。。
+		// 这里的pods已经删除了task中需要的pod，这里不会误删除的。
 		for _, pod := range pods {
 			podToDelete = append(podToDelete, pod)
 		}
@@ -438,6 +446,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		go func(taskName string, podToCreateEachTask []*v1.Pod) {
 			// 获取任务索引，检查任务是否有依赖
 			taskIndex := jobhelpers.GetTaskIndexUnderJob(taskName, job)
+			// 查看是否存在依赖项
 			if job.Spec.Tasks[taskIndex].DependsOn != nil {
 				// 如果任务有依赖且依赖未满足，则跳过当前任务的Pod创建
 				if !cc.waitDependsOnTaskMeetCondition(taskName, taskIndex, podToCreateEachTask, job) {
@@ -479,6 +488,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	waitCreationGroup.Wait()
 
 	// 处理Pod创建过程中的错误
+	// 这里没有做一致性的处理，因为这里虽然失败了。但是在下一个周期中还会去创建这个pod，也就是会保证这个pod永远被创建出来。
 	if len(creationErrs) != 0 {
 		cc.recorder.Event(job, v1.EventTypeWarning, FailedCreatePodReason,
 			fmt.Sprintf("Error creating pods: %+v", creationErrs))

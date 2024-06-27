@@ -178,6 +178,7 @@ func openSession(cache cache.Cache) *Session {
 	ssn.CSINodesStatus = snapshot.CSINodesStatus
 	ssn.RevocableNodes = snapshot.RevocableNodes
 	ssn.Queues = snapshot.Queues
+	// resourceQuotaPlugin中的NamespaceInfo经过这里赋值， snapshot.NamespaceInfo是经过scheduleCache中的requestQuotaInformer进行赋值的
 	ssn.NamespaceInfo = snapshot.NamespaceInfo
 	// calculate all nodes' resource only once in each schedule cycle, other plugins can clone it when need
 	for _, n := range ssn.Nodes {

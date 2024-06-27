@@ -178,7 +178,18 @@ func (cc *jobcontroller) addPod(obj interface{}) {
 		Event:      bus.OutOfSyncEvent,
 		JobVersion: int32(dVersion),
 	}
+    // 把pod加入到jobInfo中的pods对象中。
+    /*
+    // JobInfo struct.
+	type JobInfo struct {
+		Namespace string
+		Name      string
 
+		Job  *batch.Job
+		Pods map[string]map[string]*v1.Pod
+	}
+
+    */
 	if err := cc.cache.AddPod(pod); err != nil {
 		klog.Errorf("Failed to add Pod <%s/%s>: %v to cache",
 			pod.Namespace, pod.Name, err)

@@ -122,9 +122,11 @@ func GetGPUIndex(pod *v1.Pod) []int {
 // checkNodeGPUSharingPredicate checks if a pod with gpu requirement can be scheduled on a node.
 func checkNodeGPUSharingPredicate(pod *v1.Pod, gs *GPUDevices) (bool, error) {
 	// no gpu sharing request
+	// 判断 "volcano.sh/gpu-memory"
 	if getGPUMemoryOfPod(pod) <= 0 {
 		return true, nil
 	}
+	// 可分配的device id的信息
 	ids := predicateGPUbyMemory(pod, gs)
 	if len(ids) == 0 {
 		return false, fmt.Errorf("no enough gpu memory on node %s", gs.Name)
@@ -146,7 +148,10 @@ func checkNodeGPUNumberPredicate(pod *v1.Pod, gs *GPUDevices) (bool, error) {
 
 // predicateGPUbyMemory returns the available GPU ID
 func predicateGPUbyMemory(pod *v1.Pod, gs *GPUDevices) []int {
+	// gpu 需求量
 	gpuRequest := getGPUMemoryOfPod(pod)
+	// 节点上gpu的可分配量
+	// 返回每个deviceId上闲置的资源量
 	allocatableGPUs := getDevicesIdleGPUMemory(gs)
 
 	var devIDs []int

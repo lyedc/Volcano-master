@@ -710,6 +710,7 @@ func (ji *JobInfo) WaitingTaskNum() int32 {
 // CheckTaskValid returns whether each task of job is valid.
 func (ji *JobInfo) CheckTaskValid() bool {
 	// if job minAvailable is less than sum of(task minAvailable), skip this check
+	// podGroup中声明的数量<job中task的数量，就表示是合法的。表示已经满足了gang调度了。
 	if ji.MinAvailable < ji.TaskMinAvailableTotal {
 		return true
 	}

@@ -536,6 +536,8 @@ func (pp *predicatesPlugin) OnSessionOpen(ssn *framework.Session) {
 					})
 					return predicateStatus, fmt.Errorf("node not initialized with device %s", val)
 				}
+				// 判断是gpu是否满足需求。有两种实现一个中share gpu，一种是 vgpu
+				// 从gpu number和gpu memory进行判断
 				code, msg, err := dev.FilterNode(task.Pod)
 				filterNodeStatus := &api.Status{
 					Code:   code,

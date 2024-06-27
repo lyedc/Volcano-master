@@ -73,6 +73,7 @@ func (alloc *Action) pickUpQueuesAndJobs(queues *util.PriorityQueue, jobsMap map
 		// If not config enqueue action, change Pendi
 		//ng pg into Inqueue statue to avoid blocking job scheduling.
 		if conf.EnabledActionMap["enqueue"] {
+			// 在enqueue中，更新job的状态，变为PodGroupInqueue，如果还是pending就跳过。
 			if job.IsPending() {
 				klog.V(4).Infof("Job <%s/%s> Queue <%s> skip allocate, reason: job status is pending.",
 					job.Namespace, job.Name, job.Queue)
@@ -123,7 +124,8 @@ func (alloc *Action) allocateResources(queues *util.PriorityQueue, jobsMap map[a
 		}
 
 		queue := queues.Pop().(*api.QueueInfo)
-
+        // 判断已分配资源是否小于等于应得资源，确定队列是否过载
+        // proportion 这个插件
 		if ssn.Overused(queue) {
 			klog.V(3).Infof("Queue <%s> is overused, ignore it.", queue.Name)
 			continue
@@ -177,14 +179,15 @@ func (alloc *Action) allocateResourcesForTasks(tasks *util.PriorityQueue, job *a
 
 	for !tasks.Empty() {
 		task := tasks.Pop().(*api.TaskInfo)
-
+        // 队列中剩余的资源是否能满足task的资源需求。
+        // proportion 这个插件
 		if !ssn.Allocatable(queue, task) {
 			klog.V(3).Infof("Queue <%s> is overused when considering task <%s>, ignore it.", queue.Name, task.Name)
 			continue
 		}
 
 		klog.V(3).Infof("There are <%d> nodes for Job <%v/%v>", len(ssn.Nodes), job.Namespace, job.Name)
-
+        // 调度预先
 		if err := ssn.PrePredicateFn(task); err != nil {
 			klog.V(3).Infof("PrePredicate for task %s/%s failed for: %v", task.Namespace, task.Name, err)
 			fitErrors := api.NewFitErrors()

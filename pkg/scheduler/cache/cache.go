@@ -699,6 +699,7 @@ func (sc *SchedulerCache) addEventHandler() {
 	}
 
 	sc.quotaInformer = informerFactory.Core().V1().ResourceQuotas()
+	// 这里是处理pod的资源是否超过了resourceQuota的设置，主要用在了plugin中的resourceQuota插件中。
 	sc.quotaInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    sc.AddResourceQuota,
 		UpdateFunc: sc.UpdateResourceQuota,
@@ -1039,7 +1040,8 @@ func (sc *SchedulerCache) processResyncTask() {
 	}
 
 	reSynced := false
-	// syncTask 会用从apiserver中获取到资源信息更新task，通过旧的task，创建一个新的task到cache中。
+	// syncTask 会用从apiserver中获取到资源信息更新pod。
+	// 处理失败的task，
 	if err := sc.syncTask(task); err != nil {
 		klog.Errorf("Failed to sync pod <%v/%v>, retry it.", task.Namespace, task.Name)
 		sc.resyncTask(task)

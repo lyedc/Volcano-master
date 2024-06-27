@@ -50,6 +50,7 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 	drf
 	proportion
 	*/
+	// 给所有的queue排序
 	queues := util.NewPriorityQueue(ssn.QueueOrderFn)
 	queueSet := sets.NewString()
 	jobsMap := map[api.QueueID]*util.PriorityQueue{}
@@ -76,10 +77,12 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 				queue.Name, job.Namespace, job.Name)
 
 			queueSet.Insert(string(queue.UID))
+			// 加入queues的queue会进行优先级排序，默认使用的是顶堆。
 			queues.Push(queue)
 		}
 		// 如果job是pending状态，添加到jobsMap中
 		// 如果job的状态不是pending的，就表示没有需要调度的job
+		// 这里表示的是PodGroup的状态是pending。
 		if job.IsPending() {
 			if _, found := jobsMap[job.Queue]; !found {
 				// 如果jobsMap中没有queue，创建一个queue
@@ -91,9 +94,12 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 				sla
 				tdm
 				*/
+				// 对一个queue中的job按照优先级进行排序
+				// 给queue中的job排序。
 				jobsMap[job.Queue] = util.NewPriorityQueue(ssn.JobOrderFn)
 			}
 			klog.V(5).Infof("Added Job <%s/%s> into Queue <%s>", job.Namespace, job.Name, job.Queue)
+			// 加入到queue中的job会按照优先级进行排除
 			jobsMap[job.Queue].Push(job)
 		}
 	}
@@ -110,10 +116,12 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 		queue := queues.Pop().(*api.QueueInfo)
 
 		// skip the Queue that has no pending job
+		// 这里的job是一个优先级的队列
 		jobs, found := jobsMap[queue.UID]
 		if !found || jobs.Empty() {
 			continue
 		}
+		// 弹出优先级最高的job
 		job := jobs.Pop().(*api.JobInfo)
 		// 如果job没有资源要求， 或者JobEnqueueable允许，标记job已经开始调度
 		// 下面这些插件可以支持这个方法
@@ -124,10 +132,11 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 		resourcequota
 		sla
 		*/
+		// ssn.JobEnqueueable(job) 判断job中声明的资源是否在requestQuota中能满足
 		if job.PodGroup.Spec.MinResources == nil || ssn.JobEnqueueable(job) {
 			/*
 			JobEnqueued 用于标记Job已经开始调度
-			overcommit
+			overcommit。处理下podGroup中声明的资源
 			*/
 			ssn.JobEnqueued(job)
 			// 将podgroup的状态设置为Inqueue,也就是修改了job的状态，从pending状态转换到入队中。
